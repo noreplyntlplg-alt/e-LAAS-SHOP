@@ -1,12208 +1,9435 @@
-/* =========================================================
-   e-LAAS Private Finance
-   app.js
-   Complete Frontend Application
-   ========================================================= */
+(function () {
+    'use strict';
 
-/* =========================================================
-   1. CONFIGURATION
-   ========================================================= */
+    const CONFIG = {
+        API_URL: 'https://script.google.com/macros/s/AKfycbw8gnDcBxWV8W-RFRvi1e-yZmpa03O3P8M2iX-QAAB93TLZDQHO_8qAPInSghM9mtZm/exec',
+        APP_NAME: 'e-LAAS Private Finance',
+        SESSION_KEY: 'elaas_private_finance_session',
+        USER_KEY: 'elaas_private_finance_user',
+        SETTINGS_KEY: 'elaas_private_finance_settings',
+        LOCALE: 'th-TH',
+        CURRENCY: 'THB',
+        REQUEST_TIMEOUT: 30000
+    };
 
-const APP_CONFIG = {
-    APP_NAME: "ระบบบริหารการเงิน",
-    APP_SHORT_NAME: "Private Finance",
-    API_URL: "https://script.google.com/macros/s/AKfycbw8gnDcBxWV8W-RFRvi1e-yZmpa03O3P8M2iX-QAAB93TLZDQHO_8qAPInSghM9mtZm/exec",
-    SESSION_STORAGE_KEY: "elaas_private_session",
-    USER_STORAGE_KEY: "elaas_private_user",
-    PAGE_SIZE: 20,
-    CURRENCY: "THB",
-    LOCALE: "th-TH",
-    DATE_LOCALE: "th-TH",
-    DECIMAL_DIGITS: 2,
-    SESSION_CHECK_INTERVAL: 5 * 60 * 1000,
-    REQUEST_TIMEOUT: 30000
-};
+    const state = {
+        token: '',
+        user: null,
+        settings: {},
+        accounts: [],
+        categories: [],
+        customers: [],
+        vendors: [],
+        users: [],
+        documentTypes: [],
+        currentPage: 'dashboard',
+        currentEntity: '',
+        currentRows: [],
+        currentPageNumber: 1,
+        pageSize: 20,
+        totalRows: 0,
+        filters: {},
+        editingId: '',
+        currentModal: null,
+        initialized: false,
+        loading: false,
+        dashboardData: null,
+        reportData: null,
+        currentDocument: null,
+        currentDocumentItems: [],
+        chartInstances: {},
+        searchTimer: null
+    };
 
-/* =========================================================
-   2. APPLICATION STATE
-   ========================================================= */
-
-const AppState = {
-    initialized: false,
-    authenticated: false,
-    token: "",
-    user: null,
-
-    currentPage: "dashboard",
-
-    settings: {},
-    bootstrap: null,
-
-    accounts: [],
-    categories: [],
-    customers: [],
-    vendors: [],
-    users: [],
-    incomes: [],
-    expenses: [],
-    transfers: [],
-    documents: [],
-    auditLogs: [],
-
-    dashboard: null,
-    report: null,
-
-    pagination: {
-        accounts: {
-            page: 1,
-            pageSize: APP_CONFIG.PAGE_SIZE,
-            total: 0
+    const DOCUMENT_TYPES = [
+        {
+            code: 'QUOTATION',
+            name: 'ใบเสนอราคา'
         },
-        categories: {
-            page: 1,
-            pageSize: APP_CONFIG.PAGE_SIZE,
-            total: 0
+        {
+            code: 'INVOICE',
+            name: 'ใบแจ้งหนี้'
         },
-        customers: {
-            page: 1,
-            pageSize: APP_CONFIG.PAGE_SIZE,
-            total: 0
+        {
+            code: 'BILLING',
+            name: 'ใบวางบิล'
         },
-        vendors: {
-            page: 1,
-            pageSize: APP_CONFIG.PAGE_SIZE,
-            total: 0
+        {
+            code: 'RECEIPT',
+            name: 'ใบเสร็จรับเงิน'
         },
-        users: {
-            page: 1,
-            pageSize: APP_CONFIG.PAGE_SIZE,
-            total: 0
+        {
+            code: 'RECEIVE',
+            name: 'ใบรับเงิน'
         },
-        incomes: {
-            page: 1,
-            pageSize: APP_CONFIG.PAGE_SIZE,
-            total: 0
+        {
+            code: 'RECEIVE_VOUCHER',
+            name: 'ใบสำคัญรับ'
         },
-        expenses: {
-            page: 1,
-            pageSize: APP_CONFIG.PAGE_SIZE,
-            total: 0
+        {
+            code: 'PAYMENT_VOUCHER',
+            name: 'ใบสำคัญจ่าย'
+        },
+        {
+            code: 'PAYMENT_CERTIFICATE',
+            name: 'หนังสือรับรองการจ่ายเงิน'
+        },
+        {
+            code: 'OTHER',
+            name: 'อื่น ๆ'
+        }
+    ];
+
+    const PAGE_CONFIG = {
+        dashboard: {
+            title: 'แดชบอร์ด',
+            subtitle: 'ภาพรวมข้อมูลทางการเงินของกิจการ'
+        },
+        income: {
+            title: 'รายรับ',
+            subtitle: 'จัดการรายการรายรับของกิจการ'
+        },
+        expense: {
+            title: 'รายจ่าย',
+            subtitle: 'จัดการรายการรายจ่ายของกิจการ'
         },
         transfers: {
-            page: 1,
-            pageSize: APP_CONFIG.PAGE_SIZE,
-            total: 0
+            title: 'โอนเงินระหว่างบัญชี',
+            subtitle: 'บันทึกการโอนเงินระหว่างบัญชี'
+        },
+        accounts: {
+            title: 'เงินสด / ธนาคาร',
+            subtitle: 'จัดการบัญชีเงินสดและบัญชีธนาคาร'
+        },
+        categories: {
+            title: 'หมวดหมู่',
+            subtitle: 'จัดการหมวดหมู่รายรับและรายจ่าย'
+        },
+        customers: {
+            title: 'ลูกค้า',
+            subtitle: 'จัดการข้อมูลลูกค้า'
+        },
+        vendors: {
+            title: 'ผู้จำหน่าย / เจ้าหนี้',
+            subtitle: 'จัดการข้อมูลผู้จำหน่ายและเจ้าหนี้'
         },
         documents: {
-            page: 1,
-            pageSize: APP_CONFIG.PAGE_SIZE,
-            total: 0
+            title: 'ทะเบียนเอกสาร',
+            subtitle: 'จัดการเอกสารทางธุรกิจและการเงิน'
         },
-        auditLogs: {
-            page: 1,
-            pageSize: APP_CONFIG.PAGE_SIZE,
-            total: 0
+        reports: {
+            title: 'รายงาน',
+            subtitle: 'รายงานข้อมูลทางการเงิน'
+        },
+        users: {
+            title: 'ผู้ใช้งานและสิทธิ์',
+            subtitle: 'จัดการผู้ใช้งานและสิทธิ์การใช้งาน'
+        },
+        settings: {
+            title: 'ตั้งค่ากิจการ',
+            subtitle: 'ตั้งค่าระบบและข้อมูลกิจการ'
+        },
+        auditlogs: {
+            title: 'Audit Log',
+            subtitle: 'ประวัติการทำรายการในระบบ'
         }
-    },
+    };
 
-    filters: {
-        accounts: {},
-        categories: {},
-        customers: {},
-        vendors: {},
-        users: {},
-        incomes: {},
-        expenses: {},
-        transfers: {},
-        documents: {},
-        auditLogs: {}
-    },
+    const ENTITY_CONFIG = {
+        income: {
+            sheet: 'Income',
+            action: 'list',
+            title: 'รายรับ',
+            createAction: 'saveincome',
+            type: 'income'
+        },
+        expense: {
+            sheet: 'Expenses',
+            action: 'list',
+            title: 'รายจ่าย',
+            createAction: 'saveexpense',
+            type: 'expense'
+        },
+        transfers: {
+            sheet: 'Transfers',
+            action: 'list',
+            title: 'โอนเงิน',
+            createAction: 'savetransfer',
+            type: 'transfer'
+        },
+        accounts: {
+            sheet: 'Accounts',
+            action: 'list',
+            title: 'บัญชี',
+            createAction: 'create',
+            updateAction: 'update',
+            deleteAction: 'delete',
+            type: 'accounts'
+        },
+        categories: {
+            sheet: 'Categories',
+            action: 'list',
+            title: 'หมวดหมู่',
+            createAction: 'create',
+            updateAction: 'update',
+            deleteAction: 'delete',
+            type: 'categories'
+        },
+        customers: {
+            sheet: 'Customers',
+            action: 'list',
+            title: 'ลูกค้า',
+            createAction: 'create',
+            updateAction: 'update',
+            deleteAction: 'delete',
+            type: 'customers'
+        },
+        vendors: {
+            sheet: 'Customers/Vendors',
+            action: 'list',
+            title: 'ผู้จำหน่าย',
+            createAction: 'create',
+            updateAction: 'update',
+            deleteAction: 'delete',
+            type: 'vendors'
+        },
+        documents: {
+            sheet: 'Documents',
+            action: 'list',
+            title: 'เอกสาร',
+            createAction: 'savedocument',
+            type: 'documents'
+        },
+        users: {
+            sheet: 'Users',
+            action: 'list',
+            title: 'ผู้ใช้งาน',
+            createAction: 'create',
+            updateAction: 'update',
+            deleteAction: 'delete',
+            type: 'users'
+        }
+    };
 
-    modals: {},
-
-    documentItems: [],
-
-    documentForm: {
-        id: "",
-        docNo: "",
-        docType: "",
-        date: "",
-        dueDate: "",
-        customerId: "",
-        vendorId: "",
-        partyName: "",
-        taxId: "",
-        address: "",
-        phone: "",
-        subject: "",
-        subtotal: 0,
-        discount: 0,
-        taxRate: 0,
-        taxAmount: 0,
-        total: 0,
-        notes: "",
-        status: "DRAFT"
-    },
-
-    incomeForm: {
-        id: "",
-        date: "",
-        docNo: "",
-        accountId: "",
-        categoryId: "",
-        counterpartyType: "",
-        counterpartyId: "",
-        counterpartyName: "",
-        description: "",
-        amount: 0,
-        paymentMethod: "",
-        reference: "",
-        status: "ACTIVE"
-    },
-
-    expenseForm: {
-        id: "",
-        date: "",
-        docNo: "",
-        accountId: "",
-        categoryId: "",
-        counterpartyType: "",
-        counterpartyId: "",
-        counterpartyName: "",
-        description: "",
-        amount: 0,
-        paymentMethod: "",
-        reference: "",
-        status: "ACTIVE"
-    },
-
-    transferForm: {
-        id: "",
-        date: "",
-        docNo: "",
-        fromAccountId: "",
-        toAccountId: "",
-        amount: 0,
-        description: "",
-        reference: "",
-        status: "ACTIVE"
-    }
-};
-
-/* =========================================================
-   3. DOM HELPERS
-   ========================================================= */
-
-function $(selector, parent) {
-    const root = parent || document;
-    return root.querySelector(selector);
-}
-
-function $$(selector, parent) {
-    const root = parent || document;
-    return Array.from(root.querySelectorAll(selector));
-}
-
-function byId(id) {
-    return document.getElementById(id);
-}
-
-function createElement(tagName, className, textContent) {
-    const element = document.createElement(tagName);
-
-    if (className) {
-        element.className = className;
+    function $(selector, parent) {
+        const root = parent || document;
+        return root.querySelector(selector);
     }
 
-    if (textContent !== undefined && textContent !== null) {
-        element.textContent = textContent;
+    function $$(selector, parent) {
+        const root = parent || document;
+        return Array.prototype.slice.call(root.querySelectorAll(selector));
     }
 
-    return element;
-}
-
-function setHTML(element, html) {
-    if (!element) {
-        return;
+    function byId(id) {
+        return document.getElementById(id);
     }
 
-    element.innerHTML = html;
-}
-
-function setText(element, text) {
-    if (!element) {
-        return;
+    function hasElement(id) {
+        return !!byId(id);
     }
 
-    element.textContent = text === null || text === undefined ? "" : String(text);
-}
-
-function showElement(element) {
-    if (!element) {
-        return;
-    }
-
-    element.classList.remove("hidden");
-    element.classList.remove("d-none");
-}
-
-function hideElement(element) {
-    if (!element) {
-        return;
-    }
-
-    element.classList.add("hidden");
-}
-
-function toggleElement(element, show) {
-    if (!element) {
-        return;
-    }
-
-    if (show) {
-        showElement(element);
-    } else {
-        hideElement(element);
-    }
-}
-
-/* =========================================================
-   4. STORAGE
-   ========================================================= */
-
-function saveSession(token, user) {
-    try {
-        localStorage.setItem(
-            APP_CONFIG.SESSION_STORAGE_KEY,
-            token
-        );
-
-        localStorage.setItem(
-            APP_CONFIG.USER_STORAGE_KEY,
-            JSON.stringify(user || {})
-        );
-    } catch (error) {
-        console.error("Cannot save session:", error);
-    }
-}
-
-function loadSession() {
-    try {
-        const token = localStorage.getItem(
-            APP_CONFIG.SESSION_STORAGE_KEY
-        );
-
-        const userText = localStorage.getItem(
-            APP_CONFIG.USER_STORAGE_KEY
-        );
-
-        let user = null;
-
-        if (userText) {
-            user = JSON.parse(userText);
+    function escapeHtml(value) {
+        if (value === null || value === undefined) {
+            return '';
         }
 
-        return {
-            token: token || "",
-            user: user
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    function safeText(value) {
+        if (value === null || value === undefined) {
+            return '';
+        }
+
+        return String(value);
+    }
+
+    function parseNumber(value) {
+        if (value === null || value === undefined || value === '') {
+            return 0;
+        }
+
+        if (typeof value === 'number') {
+            return Number.isFinite(value) ? value : 0;
+        }
+
+        const normalized = String(value)
+            .replace(/,/g, '')
+            .replace(/[^\d.-]/g, '');
+
+        const number = Number(normalized);
+
+        return Number.isFinite(number) ? number : 0;
+    }
+
+    function formatMoney(value) {
+        const amount = parseNumber(value);
+
+        return new Intl.NumberFormat(CONFIG.LOCALE, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        }).format(amount);
+    }
+
+    function formatNumber(value) {
+        const amount = parseNumber(value);
+
+        return new Intl.NumberFormat(CONFIG.LOCALE, {
+            maximumFractionDigits: 2
+        }).format(amount);
+    }
+
+    function formatMoneyWithCurrency(value) {
+        return formatMoney(value) + ' บาท';
+    }
+
+    function formatDate(value) {
+        if (!value) {
+            return '';
+        }
+
+        const date = new Date(value);
+
+        if (Number.isNaN(date.getTime())) {
+            return safeText(value);
+        }
+
+        return new Intl.DateTimeFormat(CONFIG.LOCALE, {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+        }).format(date);
+    }
+
+    function formatDateTime(value) {
+        if (!value) {
+            return '';
+        }
+
+        const date = new Date(value);
+
+        if (Number.isNaN(date.getTime())) {
+            return safeText(value);
+        }
+
+        return new Intl.DateTimeFormat(CONFIG.LOCALE, {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        }).format(date);
+    }
+
+    function toInputDate(value) {
+        if (!value) {
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+
+            return year + '-' + month + '-' + day;
+        }
+
+        if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) {
+            return String(value);
+        }
+
+        const date = new Date(value);
+
+        if (Number.isNaN(date.getTime())) {
+            return '';
+        }
+
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+
+        return year + '-' + month + '-' + day;
+    }
+
+    function nowIso() {
+        return new Date().toISOString();
+    }
+
+    function generateId() {
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+            return window.crypto.randomUUID();
+        }
+
+        const timestamp = Date.now().toString(36);
+        const random = Math.random().toString(36).substring(2, 12);
+
+        return timestamp + '-' + random;
+    }
+
+    function debounce(callback, wait) {
+        let timeout = null;
+
+        return function () {
+            const context = this;
+            const args = arguments;
+
+            window.clearTimeout(timeout);
+
+            timeout = window.setTimeout(function () {
+                callback.apply(context, args);
+            }, wait);
         };
-    } catch (error) {
-        console.error("Cannot load session:", error);
-
-        return {
-            token: "",
-            user: null
-        };
-    }
-}
-
-function clearSession() {
-    try {
-        localStorage.removeItem(
-            APP_CONFIG.SESSION_STORAGE_KEY
-        );
-
-        localStorage.removeItem(
-            APP_CONFIG.USER_STORAGE_KEY
-        );
-    } catch (error) {
-        console.error("Cannot clear session:", error);
     }
 
-    AppState.token = "";
-    AppState.user = null;
-    AppState.authenticated = false;
-}
-
-/* =========================================================
-   5. API
-   ========================================================= */
-
-async function apiRequest(action, data, options) {
-    const requestOptions = options || {};
-
-    if (
-        !APP_CONFIG.API_URL ||
-        APP_CONFIG.API_URL.indexOf("ใส่_URL") !== -1
-    ) {
-        throw new Error(
-            "กรุณากำหนด API_URL ใน app.js ให้เป็น URL ของ Google Apps Script Web App"
+    function isConfiguredApi() {
+        return (
+            CONFIG.API_URL &&
+            CONFIG.API_URL.indexOf('PASTE_YOUR_GOOGLE_APPS_SCRIPT') === -1 &&
+            /^https:\/\/script\.google\.com\//i.test(CONFIG.API_URL)
         );
     }
 
-    const payload = Object.assign(
-        {},
-        data || {},
-        {
-            action: action
+    function assertApiConfigured() {
+        if (!isConfiguredApi()) {
+            throw new Error(
+                'ยังไม่ได้ตั้งค่า API_URL ใน app.js กรุณาใส่ URL Google Apps Script Web App ที่ลงท้ายด้วย /exec'
+            );
         }
-    );
-
-    if (
-        AppState.token &&
-        !Object.prototype.hasOwnProperty.call(payload, "token")
-    ) {
-        payload.token = AppState.token;
     }
 
-    const controller = new AbortController();
+    function getStorage(key) {
+        try {
+            return localStorage.getItem(key);
+        } catch (error) {
+            console.error('localStorage read error:', error);
+            return null;
+        }
+    }
 
-    const timeout = setTimeout(function () {
-        controller.abort();
-    }, requestOptions.timeout || APP_CONFIG.REQUEST_TIMEOUT);
+    function setStorage(key, value) {
+        try {
+            localStorage.setItem(key, value);
+            return true;
+        } catch (error) {
+            console.error('localStorage write error:', error);
+            return false;
+        }
+    }
 
-    try {
-        const response = await fetch(
-            APP_CONFIG.API_URL,
+    function removeStorage(key) {
+        try {
+            localStorage.removeItem(key);
+        } catch (error) {
+            console.error('localStorage remove error:', error);
+        }
+    }
+
+    function setLoading(loading, message) {
+        state.loading = loading;
+
+        const loginButton = byId('loginButton');
+        const loginSubmitButton = byId('loginSubmit');
+        const globalLoader = byId('globalLoader');
+
+        if (loginButton) {
+            loginButton.disabled = loading;
+            loginButton.textContent = loading
+                ? 'กำลังเข้าสู่ระบบ...'
+                : 'เข้าสู่ระบบ';
+        }
+
+        if (loginSubmitButton) {
+            loginSubmitButton.disabled = loading;
+            loginSubmitButton.textContent = loading
+                ? 'กำลังดำเนินการ...'
+                : 'เข้าสู่ระบบ';
+        }
+
+        if (globalLoader) {
+            globalLoader.classList.toggle('hidden', !loading);
+
+            const loaderText = globalLoader.querySelector('[data-loader-text]');
+
+            if (loaderText) {
+                loaderText.textContent = message || 'กำลังโหลดข้อมูล...';
+            }
+        }
+
+        document.body.classList.toggle('is-loading', loading);
+    }
+
+    function showElement(element) {
+        if (!element) {
+            return;
+        }
+
+        element.classList.remove('hidden');
+
+        if (element.style) {
+            element.style.display = '';
+        }
+    }
+
+    function hideElement(element) {
+        if (!element) {
+            return;
+        }
+
+        element.classList.add('hidden');
+
+        if (element.style) {
+            element.style.display = 'none';
+        }
+    }
+
+    function showToast(message, type, duration) {
+        const toastType = type || 'info';
+        const timeout = duration || 3500;
+
+        let container = byId('toastContainer');
+
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'toastContainer';
+            container.className = 'toast-container';
+            document.body.appendChild(container);
+        }
+
+        const toast = document.createElement('div');
+        toast.className = 'toast toast-' + toastType;
+
+        const iconMap = {
+            success: '✓',
+            error: '!',
+            warning: '!',
+            info: 'i'
+        };
+
+        const icon = iconMap[toastType] || 'i';
+
+        toast.innerHTML =
+            '<span class="toast-icon">' +
+            escapeHtml(icon) +
+            '</span>' +
+            '<span class="toast-message">' +
+            escapeHtml(message) +
+            '</span>' +
+            '<button type="button" class="toast-close" aria-label="ปิด">×</button>';
+
+        container.appendChild(toast);
+
+        const closeButton = toast.querySelector('.toast-close');
+
+        if (closeButton) {
+            closeButton.addEventListener('click', function () {
+                removeToast(toast);
+            });
+        }
+
+        window.setTimeout(function () {
+            removeToast(toast);
+        }, timeout);
+    }
+
+    function removeToast(toast) {
+        if (!toast) {
+            return;
+        }
+
+        toast.classList.add('toast-leaving');
+
+        window.setTimeout(function () {
+            if (toast.parentNode) {
+                toast.parentNode.removeChild(toast);
+            }
+        }, 250);
+    }
+
+    function confirmAction(message) {
+        return new Promise(function (resolve) {
+            const result = window.confirm(message);
+            resolve(result);
+        });
+    }
+
+    function normalizeResponse(response) {
+        if (!response) {
+            throw new Error('ไม่ได้รับข้อมูลตอบกลับจากเซิร์ฟเวอร์');
+        }
+
+        if (typeof response === 'string') {
+            try {
+                response = JSON.parse(response);
+            } catch (error) {
+                return {
+                    ok: true,
+                    data: response
+                };
+            }
+        }
+
+        if (response.success === false) {
+            throw new Error(
+                response.message ||
+                response.error ||
+                'ระบบไม่สามารถดำเนินการได้'
+            );
+        }
+
+        if (response.ok === false) {
+            throw new Error(
+                response.message ||
+                response.error ||
+                'ระบบไม่สามารถดำเนินการได้'
+            );
+        }
+
+        return response;
+    }
+
+    function unwrapResponse(response) {
+        const normalized = normalizeResponse(response);
+
+        if (
+            Object.prototype.hasOwnProperty.call(
+                normalized,
+                'data'
+            )
+        ) {
+            return normalized.data;
+        }
+
+        return normalized;
+    }
+
+    function serializeValue(value) {
+        if (value === null || value === undefined) {
+            return '';
+        }
+
+        if (typeof value === 'object') {
+            return JSON.stringify(value);
+        }
+
+        return String(value);
+    }
+
+    async function fetchWithTimeout(url, options) {
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(
+            function () {
+                controller.abort();
+            },
+            CONFIG.REQUEST_TIMEOUT
+        );
+
+        const requestOptions = Object.assign(
+            {},
+            options || {},
             {
-                method: requestOptions.method || "POST",
-                headers: {
-                    "Content-Type": "text/plain;charset=utf-8"
-                },
-                body: JSON.stringify(payload),
                 signal: controller.signal
             }
         );
 
-        clearTimeout(timeout);
+        try {
+            return await fetch(url, requestOptions);
+        } finally {
+            window.clearTimeout(timeoutId);
+        }
+    }
 
-        if (!response.ok) {
+    async function apiRequest(action, payload, options) {
+        assertApiConfigured();
+
+        const params = payload || {};
+        const requestOptions = options || {};
+
+        const requestData = Object.assign(
+            {},
+            params,
+            {
+                action: action
+            }
+        );
+
+        if (
+            state.token &&
+            action !== 'login'
+        ) {
+            requestData.token = state.token;
+        }
+
+        const body = new URLSearchParams();
+
+        Object.keys(requestData).forEach(function (key) {
+            body.set(
+                key,
+                serializeValue(requestData[key])
+            );
+        });
+
+        let response;
+
+        try {
+            response = await fetchWithTimeout(
+                CONFIG.API_URL,
+                {
+                    method: 'POST',
+                    body: body,
+                    redirect: 'follow',
+                    credentials: 'omit',
+                    mode: 'cors',
+                    cache: 'no-store'
+                }
+            );
+        } catch (error) {
+            if (error && error.name === 'AbortError') {
+                throw new Error(
+                    'การเชื่อมต่อใช้เวลานานเกินกำหนด กรุณาตรวจสอบ Google Apps Script และลองใหม่อีกครั้ง'
+                );
+            }
+
             throw new Error(
-                "HTTP Error " + response.status
+                'ไม่สามารถเชื่อมต่อ Google Apps Script ได้ กรุณาตรวจสอบ API_URL และการ Deploy Web App'
             );
         }
+
+        const contentType =
+            response.headers.get('content-type') || '';
 
         const text = await response.text();
 
-        let result;
-
-        try {
-            result = JSON.parse(text);
-        } catch (parseError) {
-            console.error("Invalid JSON response:", text);
+        if (!response.ok) {
             throw new Error(
-                "เซิร์ฟเวอร์ส่งข้อมูลกลับมาไม่ถูกต้อง"
+                'เซิร์ฟเวอร์ตอบกลับ HTTP ' +
+                response.status +
+                ': ' +
+                text.substring(0, 500)
             );
         }
 
-        if (!result || result.ok !== true) {
-            const message =
-                result &&
-                result.error &&
-                result.error.message
-                    ? result.error.message
-                    : "เกิดข้อผิดพลาดจากเซิร์ฟเวอร์";
+        let parsed;
 
-            throw new Error(message);
+        if (
+            contentType.indexOf('application/json') !== -1 ||
+            contentType.indexOf('text/json') !== -1
+        ) {
+            try {
+                parsed = JSON.parse(text);
+            } catch (error) {
+                throw new Error(
+                    'Google Apps Script ส่งข้อมูล JSON กลับมาไม่ถูกต้อง'
+                );
+            }
+        } else {
+            try {
+                parsed = JSON.parse(text);
+            } catch (error) {
+                throw new Error(
+                    'ได้รับข้อมูลจาก Google Apps Script แต่ไม่ใช่ JSON ที่ระบบรองรับ'
+                );
+            }
         }
 
-        return result;
-    } catch (error) {
-        clearTimeout(timeout);
+        const normalized = normalizeResponse(parsed);
 
-        if (error.name === "AbortError") {
+        if (
+            normalized.message &&
+            /session|token|หมดอายุ|unauthorized|ไม่อนุญาต/i.test(
+                String(normalized.message)
+            )
+        ) {
+            if (action !== 'login') {
+                clearSession();
+            }
+        }
+
+        if (
+            normalized.error &&
+            /session|token|หมดอายุ|unauthorized|ไม่อนุญาต/i.test(
+                String(normalized.error)
+            )
+        ) {
+            if (action !== 'login') {
+                clearSession();
+            }
+        }
+
+        return normalized;
+    }
+
+    function clearSession() {
+        state.token = '';
+        state.user = null;
+
+        removeStorage(CONFIG.SESSION_KEY);
+        removeStorage(CONFIG.USER_KEY);
+
+        hideApp();
+        showLogin();
+    }
+
+    function saveSession(token, user) {
+        state.token = token || '';
+        state.user = user || null;
+
+        if (state.token) {
+            setStorage(
+                CONFIG.SESSION_KEY,
+                state.token
+            );
+        } else {
+            removeStorage(CONFIG.SESSION_KEY);
+        }
+
+        if (state.user) {
+            setStorage(
+                CONFIG.USER_KEY,
+                JSON.stringify(state.user)
+            );
+        } else {
+            removeStorage(CONFIG.USER_KEY);
+        }
+    }
+
+    function loadStoredSession() {
+        const token = getStorage(CONFIG.SESSION_KEY);
+        const storedUser = getStorage(CONFIG.USER_KEY);
+
+        state.token = token || '';
+
+        if (storedUser) {
+            try {
+                state.user = JSON.parse(storedUser);
+            } catch (error) {
+                state.user = null;
+            }
+        }
+
+        return !!state.token;
+    }
+
+    async function login(username, password) {
+        if (!username || !password) {
             throw new Error(
-                "การเชื่อมต่อใช้เวลานานเกินกำหนด"
+                'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน'
             );
         }
 
-        throw error;
-    }
-}
-
-async function apiGet(action, data) {
-    return apiRequest(
-        action,
-        data,
-        {
-            method: "POST"
-        }
-    );
-}
-
-/* =========================================================
-   6. ERROR HANDLING
-   ========================================================= */
-
-function getErrorMessage(error) {
-    if (!error) {
-        return "เกิดข้อผิดพลาด";
-    }
-
-    if (typeof error === "string") {
-        return error;
-    }
-
-    if (error.message) {
-        return error.message;
-    }
-
-    return "เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ";
-}
-
-function handleApiError(error) {
-    const message = getErrorMessage(error);
-
-    console.error(error);
-
-    showToast(
-        "เกิดข้อผิดพลาด",
-        message,
-        "error"
-    );
-
-    if (
-        message.indexOf("หมดอายุ") !== -1 ||
-        message.indexOf("session") !== -1 ||
-        message.indexOf("ไม่ได้เข้าสู่ระบบ") !== -1 ||
-        message.indexOf("ไม่มีสิทธิ์") !== -1
-    ) {
-        clearSession();
-        showLoginScreen();
-    }
-}
-
-/* =========================================================
-   7. LOADING
-   ========================================================= */
-
-function showLoading(message) {
-    const overlay = byId("loadingOverlay");
-
-    if (!overlay) {
-        return;
-    }
-
-    const text = $(".loading-text", overlay);
-
-    if (text) {
-        text.textContent =
-            message || "กำลังดำเนินการ...";
-    }
-
-    overlay.classList.add("show");
-}
-
-function hideLoading() {
-    const overlay = byId("loadingOverlay");
-
-    if (!overlay) {
-        return;
-    }
-
-    overlay.classList.remove("show");
-}
-
-/* =========================================================
-   8. TOAST
-   ========================================================= */
-
-function showToast(title, message, type) {
-    let container = byId("toastContainer");
-
-    if (!container) {
-        container = createElement(
-            "div",
-            "toast-container"
-        );
-
-        container.id = "toastContainer";
-
-        document.body.appendChild(container);
-    }
-
-    const toast = createElement(
-        "div",
-        "toast toast-" + (type || "info")
-    );
-
-    const icon = createElement(
-        "div",
-        "toast-icon"
-    );
-
-    const content = createElement(
-        "div",
-        "toast-content"
-    );
-
-    const titleElement = createElement(
-        "div",
-        "toast-title",
-        title || "แจ้งเตือน"
-    );
-
-    const messageElement = createElement(
-        "div",
-        "toast-message",
-        message || ""
-    );
-
-    const close = createElement(
-        "button",
-        "toast-close",
-        "×"
-    );
-
-    close.type = "button";
-
-    if (type === "success") {
-        icon.textContent = "✓";
-    } else if (type === "error") {
-        icon.textContent = "!";
-    } else if (type === "warning") {
-        icon.textContent = "!";
-    } else {
-        icon.textContent = "i";
-    }
-
-    close.addEventListener(
-        "click",
-        function () {
-            toast.remove();
-        }
-    );
-
-    content.appendChild(titleElement);
-    content.appendChild(messageElement);
-
-    toast.appendChild(icon);
-    toast.appendChild(content);
-    toast.appendChild(close);
-
-    container.appendChild(toast);
-
-    setTimeout(function () {
-        if (toast.parentNode) {
-            toast.remove();
-        }
-    }, 5000);
-}
-
-/* =========================================================
-   9. FORMATTERS
-   ========================================================= */
-
-function toNumber(value) {
-    if (typeof value === "number") {
-        return Number.isFinite(value)
-            ? value
-            : 0;
-    }
-
-    if (value === null || value === undefined) {
-        return 0;
-    }
-
-    const cleaned = String(value)
-        .replace(/,/g, "")
-        .replace(/[^\d.-]/g, "");
-
-    const number = Number(cleaned);
-
-    return Number.isFinite(number)
-        ? number
-        : 0;
-}
-
-function formatMoney(value) {
-    const number = toNumber(value);
-
-    return new Intl.NumberFormat(
-        APP_CONFIG.LOCALE,
-        {
-            minimumFractionDigits:
-                APP_CONFIG.DECIMAL_DIGITS,
-            maximumFractionDigits:
-                APP_CONFIG.DECIMAL_DIGITS
-        }
-    ).format(number);
-}
-
-function formatMoneyShort(value) {
-    const number = toNumber(value);
-
-    if (Math.abs(number) >= 1000000000) {
-        return (
-            (number / 1000000000).toFixed(2) +
-            " พันล้าน"
-        );
-    }
-
-    if (Math.abs(number) >= 1000000) {
-        return (
-            (number / 1000000).toFixed(2) +
-            " ล้าน"
-        );
-    }
-
-    if (Math.abs(number) >= 1000) {
-        return (
-            (number / 1000).toFixed(1) +
-            " พัน"
-        );
-    }
-
-    return formatMoney(number);
-}
-
-function formatCurrency(value) {
-    return formatMoney(value) + " บาท";
-}
-
-function formatDate(value) {
-    if (!value) {
-        return "-";
-    }
-
-    const date = parseDate(value);
-
-    if (!date) {
-        return String(value);
-    }
-
-    return new Intl.DateTimeFormat(
-        APP_CONFIG.DATE_LOCALE,
-        {
-            day: "2-digit",
-            month: "2-digit",
-            year: "numeric"
-        }
-    ).format(date);
-}
-
-function formatDateTime(value) {
-    if (!value) {
-        return "-";
-    }
-
-    const date = parseDate(value);
-
-    if (!date) {
-        return String(value);
-    }
-
-    return new Intl.DateTimeFormat(
-        APP_CONFIG.DATE_LOCALE,
-        {
-            day: "2-digit",
-            month: "2-digit",
-            year: "numeric",
-            hour: "2-digit",
-            minute: "2-digit"
-        }
-    ).format(date);
-}
-
-function formatDateInput(value) {
-    if (!value) {
-        return "";
-    }
-
-    const date = parseDate(value);
-
-    if (!date) {
-        return "";
-    }
-
-    const year = date.getFullYear();
-    const month =
-        String(date.getMonth() + 1).padStart(2, "0");
-    const day =
-        String(date.getDate()).padStart(2, "0");
-
-    return year + "-" + month + "-" + day;
-}
-
-function parseDate(value) {
-    if (!value) {
-        return null;
-    }
-
-    if (value instanceof Date) {
-        return value;
-    }
-
-    const text = String(value).trim();
-
-    if (!text) {
-        return null;
-    }
-
-    let date;
-
-    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
-        date = new Date(text + "T00:00:00");
-    } else {
-        date = new Date(text);
-    }
-
-    if (Number.isNaN(date.getTime())) {
-        return null;
-    }
-
-    return date;
-}
-
-function getTodayString() {
-    const date = new Date();
-
-    const year = date.getFullYear();
-    const month =
-        String(date.getMonth() + 1).padStart(2, "0");
-    const day =
-        String(date.getDate()).padStart(2, "0");
-
-    return year + "-" + month + "-" + day;
-}
-
-function getFirstDayOfMonth() {
-    const date = new Date();
-
-    const year = date.getFullYear();
-    const month =
-        String(date.getMonth() + 1).padStart(2, "0");
-
-    return year + "-" + month + "-01";
-}
-
-function getCurrentYear() {
-    return new Date().getFullYear();
-}
-
-function escapeHTML(value) {
-    if (value === null || value === undefined) {
-        return "";
-    }
-
-    return String(value)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-}
-
-function escapeAttribute(value) {
-    return escapeHTML(value);
-}
-
-/* =========================================================
-   10. DATA HELPERS
-   ========================================================= */
-
-function getItemById(items, id) {
-    if (!Array.isArray(items)) {
-        return null;
-    }
-
-    return (
-        items.find(function (item) {
-            return String(item.id) === String(id);
-        }) || null
-    );
-}
-
-function getAccountName(id) {
-    const item = getItemById(
-        AppState.accounts,
-        id
-    );
-
-    return item
-        ? item.name
-        : "-";
-}
-
-function getCategoryName(id) {
-    const item = getItemById(
-        AppState.categories,
-        id
-    );
-
-    return item
-        ? item.name
-        : "-";
-}
-
-function getCustomerName(id) {
-    const item = getItemById(
-        AppState.customers,
-        id
-    );
-
-    return item
-        ? item.name
-        : "-";
-}
-
-function getVendorName(id) {
-    const item = getItemById(
-        AppState.vendors,
-        id
-    );
-
-    return item
-        ? item.name
-        : "-";
-}
-
-function getDocumentTypeName(type) {
-    const types = {
-        QUOTATION: "ใบเสนอราคา",
-        INVOICE: "ใบแจ้งหนี้",
-        BILLING: "ใบวางบิล",
-        RECEIPT: "ใบเสร็จรับเงิน",
-        PAYMENT_RECEIPT: "ใบรับเงิน",
-        RECEIVING_VOUCHER: "ใบสำคัญรับ",
-        PAYMENT_VOUCHER: "ใบสำคัญจ่าย",
-        PAYMENT_CERTIFICATE: "หนังสือรับรองการจ่ายเงิน",
-        OTHER: "อื่น ๆ"
-    };
-
-    return (
-        types[type] ||
-        type ||
-        "-"
-    );
-}
-
-function getRoleName(role) {
-    const roles = {
-        admin: "ผู้ดูแลระบบ",
-        manager: "ผู้จัดการ",
-        staff: "เจ้าหน้าที่",
-        user: "ผู้ใช้งาน"
-    };
-
-    return roles[role] || role || "-";
-}
-
-function getStatusName(status) {
-    const statuses = {
-        ACTIVE: "ใช้งาน",
-        INACTIVE: "ไม่ใช้งาน",
-        DRAFT: "ร่าง",
-        ISSUED: "ออกเอกสารแล้ว",
-        PAID: "ชำระแล้ว",
-        CANCELLED: "ยกเลิก",
-        OVERDUE: "เกินกำหนด"
-    };
-
-    return statuses[status] || status || "-";
-}
-
-/* =========================================================
-   11. AUTHORIZATION
-   ========================================================= */
-
-function isLoggedIn() {
-    return (
-        Boolean(AppState.authenticated) &&
-        Boolean(AppState.token) &&
-        Boolean(AppState.user)
-    );
-}
-
-function isAdmin() {
-    return (
-        AppState.user &&
-        String(AppState.user.role).toLowerCase() === "admin"
-    );
-}
-
-function isManager() {
-    if (!AppState.user) {
-        return false;
-    }
-
-    const role =
-        String(AppState.user.role).toLowerCase();
-
-    return role === "admin" || role === "manager";
-}
-
-function canManageUsers() {
-    return isAdmin();
-}
-
-function canManageSettings() {
-    return isAdmin();
-}
-
-function canDelete() {
-    return isAdmin() || isManager();
-}
-
-/* =========================================================
-   12. LOGIN SCREEN
-   ========================================================= */
-
-function showLoginScreen() {
-    const loginPage = byId("loginPage");
-    const appLayout = byId("appLayout");
-
-    if (loginPage) {
-        showElement(loginPage);
-    }
-
-    if (appLayout) {
-        hideElement(appLayout);
-    }
-
-    document.body.classList.remove(
-        "mobile-sidebar-open"
-    );
-}
-
-function showApplication() {
-    const loginPage = byId("loginPage");
-    const appLayout = byId("appLayout");
-
-    if (loginPage) {
-        hideElement(loginPage);
-    }
-
-    if (appLayout) {
-        showElement(appLayout);
-    }
-
-    updateUserUI();
-    updateConnectionStatus("online");
-}
-
-function updateUserUI() {
-    if (!AppState.user) {
-        return;
-    }
-
-    const fullName =
-        AppState.user.fullName ||
-        AppState.user.username ||
-        "ผู้ใช้งาน";
-
-    const role =
-        getRoleName(AppState.user.role);
-
-    setText(
-        byId("currentUserName"),
-        fullName
-    );
-
-    setText(
-        byId("currentUserRole"),
-        role
-    );
-
-    setText(
-        byId("sidebarUserName"),
-        fullName
-    );
-
-    setText(
-        byId("sidebarUserRole"),
-        role
-    );
-
-    const avatarLetters =
-        getAvatarLetters(fullName);
-
-    setText(
-        byId("currentUserAvatar"),
-        avatarLetters
-    );
-
-    setText(
-        byId("sidebarUserAvatar"),
-        avatarLetters
-    );
-
-    $$(".admin-only").forEach(function (element) {
-        toggleElement(
-            element,
-            isAdmin()
-        );
-    });
-
-    $$(".manager-only").forEach(function (element) {
-        toggleElement(
-            element,
-            isManager()
-        );
-    });
-}
-
-function getAvatarLetters(name) {
-    const text =
-        String(name || "").trim();
-
-    if (!text) {
-        return "?";
-    }
-
-    const parts = text.split(/\s+/);
-
-    if (parts.length === 1) {
-        return parts[0].substring(0, 2);
-    }
-
-    return (
-        parts[0].substring(0, 1) +
-        parts[parts.length - 1].substring(0, 1)
-    );
-}
-
-/* =========================================================
-   13. LOGIN
-   ========================================================= */
-
-async function login(username, password) {
-    if (!username) {
-        showToast(
-            "เข้าสู่ระบบ",
-            "กรุณากรอกชื่อผู้ใช้งาน",
-            "warning"
-        );
-        return false;
-    }
-
-    if (!password) {
-        showToast(
-            "เข้าสู่ระบบ",
-            "กรุณากรอกรหัสผ่าน",
-            "warning"
-        );
-        return false;
-    }
-
-    showLoading("กำลังเข้าสู่ระบบ...");
-
-    try {
-        const result = await apiRequest(
-            "login",
+        const response = await apiRequest(
+            'login',
             {
                 username: username,
                 password: password
             }
         );
 
-        const data = result.data || {};
+        console.log(
+            'LOGIN RESPONSE:',
+            response
+        );
 
-        AppState.token =
+        const data = unwrapResponse(response);
+
+        if (!data) {
+            throw new Error(
+                'ระบบไม่ส่งข้อมูล Login กลับมา'
+            );
+        }
+
+        const token =
             data.token ||
-            "";
+            data.sessionToken ||
+            data.accessToken ||
+            '';
 
-        AppState.user =
+        const user =
             data.user ||
+            data.account ||
             null;
 
-        AppState.authenticated =
-            Boolean(AppState.token);
+        if (!token) {
+            throw new Error(
+                'เข้าสู่ระบบไม่สำเร็จ: Google Apps Script ไม่ได้ส่ง Session Token กลับมา'
+            );
+        }
 
         saveSession(
-            AppState.token,
-            AppState.user
-        );
-
-        showApplication();
-
-        await initializeAfterLogin();
-
-        showToast(
-            "เข้าสู่ระบบสำเร็จ",
-            "ยินดีต้อนรับ " +
-                (
-                    AppState.user.fullName ||
-                    AppState.user.username
-                ),
-            "success"
-        );
-
-        return true;
-    } catch (error) {
-        handleApiError(error);
-        return false;
-    } finally {
-        hideLoading();
-    }
-}
-
-async function logout() {
-    if (!AppState.token) {
-        clearSession();
-        showLoginScreen();
-        return;
-    }
-
-    showLoading("กำลังออกจากระบบ...");
-
-    try {
-        await apiRequest(
-            "logout",
-            {
-                token: AppState.token
-            }
-        );
-    } catch (error) {
-        console.warn(
-            "Logout request failed:",
-            error
-        );
-    } finally {
-        clearSession();
-        hideLoading();
-        showLoginScreen();
-
-        showToast(
-            "ออกจากระบบ",
-            "ออกจากระบบเรียบร้อยแล้ว",
-            "success"
-        );
-    }
-}
-
-async function checkExistingSession() {
-    const session = loadSession();
-
-    if (!session.token) {
-        showLoginScreen();
-        return false;
-    }
-
-    AppState.token =
-        session.token;
-
-    AppState.user =
-        session.user;
-
-    showLoading("กำลังตรวจสอบเซสชัน...");
-
-    try {
-        const result = await apiRequest(
-            "me",
-            {
-                token: AppState.token
-            }
-        );
-
-        AppState.user =
-            result.data &&
-            result.data.user
-                ? result.data.user
-                : AppState.user;
-
-        AppState.authenticated = true;
-
-        saveSession(
-            AppState.token,
-            AppState.user
-        );
-
-        showApplication();
-
-        await initializeAfterLogin();
-
-        return true;
-    } catch (error) {
-        console.warn(
-            "Session invalid:",
-            error
-        );
-
-        clearSession();
-        showLoginScreen();
-
-        return false;
-    } finally {
-        hideLoading();
-    }
-}
-
-/* =========================================================
-   14. INITIALIZATION
-   ========================================================= */
-
-async function initializeApp() {
-    if (AppState.initialized) {
-        return;
-    }
-
-    AppState.initialized = true;
-
-    bindGlobalEvents();
-    initializeDateFields();
-
-    await checkExistingSession();
-
-    setInterval(
-        sessionHeartbeat,
-        APP_CONFIG.SESSION_CHECK_INTERVAL
-    );
-}
-
-async function initializeAfterLogin() {
-    try {
-        showLoading(
-            "กำลังโหลดข้อมูลระบบ..."
+            token,
+            user
         );
 
         await loadBootstrap();
 
-        await navigateTo(
-            AppState.currentPage || "dashboard"
-        );
-    } catch (error) {
-        handleApiError(error);
-    } finally {
-        hideLoading();
-    }
-}
+        showApp();
 
-async function loadBootstrap() {
-    const result =
-        await apiRequest(
-            "bootstrap",
-            {}
-        );
+        navigate('dashboard');
 
-    AppState.bootstrap =
-        result.data || {};
-
-    const data =
-        AppState.bootstrap;
-
-    AppState.settings =
-        data.settings || {};
-
-    AppState.accounts =
-        data.accounts || [];
-
-    AppState.categories =
-        data.categories || [];
-
-    AppState.customers =
-        data.customers || [];
-
-    AppState.vendors =
-        data.vendors || [];
-
-    AppState.users =
-        data.users || [];
-
-    updateBusinessUI();
-}
-
-async function sessionHeartbeat() {
-    if (!isLoggedIn()) {
-        return;
+        return {
+            token: token,
+            user: user
+        };
     }
 
-    try {
-        const result =
-            await apiRequest(
-                "me",
-                {
-                    token: AppState.token
-                }
-            );
-
-        if (
-            result.data &&
-            result.data.user
-        ) {
-            AppState.user =
-                result.data.user;
-
-            saveSession(
-                AppState.token,
-                AppState.user
-            );
-
-            updateUserUI();
-        }
-    } catch (error) {
-        console.warn(
-            "Session heartbeat failed:",
-            error
-        );
-    }
-}
-
-/* =========================================================
-   15. BUSINESS UI
-   ========================================================= */
-
-function updateBusinessUI() {
-    const businessName =
-        AppState.settings.business_name ||
-        AppState.settings.company_name ||
-        "ระบบบริหารการเงิน";
-
-    const businessDescription =
-        AppState.settings.business_description ||
-        AppState.settings.company_description ||
-        "ระบบจัดการรายรับ รายจ่าย และเอกสาร";
-
-    setText(
-        byId("businessName"),
-        businessName
-    );
-
-    setText(
-        byId("businessDescription"),
-        businessDescription
-    );
-
-    setText(
-        byId("sidebarBrandTitle"),
-        businessName
-    );
-
-    setText(
-        byId("sidebarBrandSubtitle"),
-        businessDescription
-    );
-
-    setText(
-        byId("loginAppTitle"),
-        businessName
-    );
-
-    setText(
-        byId("loginAppSubtitle"),
-        businessDescription
-    );
-}
-
-/* =========================================================
-   16. NAVIGATION
-   ========================================================= */
-
-const PAGE_TITLES = {
-    dashboard: {
-        title: "Dashboard",
-        subtitle: "ภาพรวมระบบการเงิน"
-    },
-
-    incomes: {
-        title: "รายรับ",
-        subtitle: "จัดการรายการรายรับ"
-    },
-
-    expenses: {
-        title: "รายจ่าย",
-        subtitle: "จัดการรายการรายจ่าย"
-    },
-
-    transfers: {
-        title: "โอนเงินระหว่างบัญชี",
-        subtitle: "จัดการการโอนเงิน"
-    },
-
-    accounts: {
-        title: "เงินสด / ธนาคาร",
-        subtitle: "จัดการบัญชีการเงิน"
-    },
-
-    customers: {
-        title: "ลูกค้า",
-        subtitle: "จัดการข้อมูลลูกค้า"
-    },
-
-    vendors: {
-        title: "ผู้จำหน่าย / เจ้าหนี้",
-        subtitle: "จัดการข้อมูลผู้จำหน่ายและเจ้าหนี้"
-    },
-
-    documents: {
-        title: "ทะเบียนเอกสาร",
-        subtitle: "จัดการเอกสารทางการเงิน"
-    },
-
-    users: {
-        title: "ผู้ใช้งานและสิทธิ์",
-        subtitle: "จัดการผู้ใช้งานระบบ"
-    },
-
-    settings: {
-        title: "ตั้งค่ากิจการ",
-        subtitle: "กำหนดข้อมูลกิจการและระบบ"
-    },
-
-    auditLogs: {
-        title: "Audit Log",
-        subtitle: "ประวัติการใช้งานระบบ"
-    },
-
-    report: {
-        title: "รายงาน",
-        subtitle: "รายงานข้อมูลทางการเงิน"
-    }
-};
-
-async function navigateTo(page) {
-    if (!isLoggedIn()) {
-        showLoginScreen();
-        return;
-    }
-
-    const targetPage =
-        PAGE_TITLES[page]
-            ? page
-            : "dashboard";
-
-    AppState.currentPage =
-        targetPage;
-
-    updatePageTitle(
-        targetPage
-    );
-
-    updateActiveNavigation(
-        targetPage
-    );
-
-    closeMobileSidebar();
-
-    const pageContainer =
-        byId("pageContent");
-
-    if (!pageContainer) {
-        return;
-    }
-
-    showLoading(
-        "กำลังโหลดข้อมูล..."
-    );
-
-    try {
-        switch (targetPage) {
-            case "dashboard":
-                await renderDashboard(
-                    pageContainer
-                );
-                break;
-
-            case "incomes":
-                await renderIncomes(
-                    pageContainer
-                );
-                break;
-
-            case "expenses":
-                await renderExpenses(
-                    pageContainer
-                );
-                break;
-
-            case "transfers":
-                await renderTransfers(
-                    pageContainer
-                );
-                break;
-
-            case "accounts":
-                await renderAccounts(
-                    pageContainer
-                );
-                break;
-
-            case "customers":
-                await renderCustomers(
-                    pageContainer
-                );
-                break;
-
-            case "vendors":
-                await renderVendors(
-                    pageContainer
-                );
-                break;
-
-            case "documents":
-                await renderDocuments(
-                    pageContainer
-                );
-                break;
-
-            case "users":
-                await renderUsers(
-                    pageContainer
-                );
-                break;
-
-            case "settings":
-                await renderSettings(
-                    pageContainer
-                );
-                break;
-
-            case "auditLogs":
-                await renderAuditLogs(
-                    pageContainer
-                );
-                break;
-
-            case "report":
-                await renderReport(
-                    pageContainer
-                );
-                break;
-
-            default:
-                await renderDashboard(
-                    pageContainer
-                );
-        }
-    } catch (error) {
-        handleApiError(error);
-
-        setHTML(
-            pageContainer,
-            `
-            <div class="card">
-                <div class="card-body">
-                    <div class="empty-state">
-                        <div class="error-icon">!</div>
-                        <div class="empty-state-title">
-                            ไม่สามารถโหลดข้อมูลได้
-                        </div>
-                        <div class="empty-state-description">
-                            ${escapeHTML(
-                                getErrorMessage(error)
-                            )}
-                        </div>
-                    </div>
-                </div>
-            </div>
-            `
-        );
-    } finally {
-        hideLoading();
-    }
-}
-
-function updatePageTitle(page) {
-    const config =
-        PAGE_TITLES[page] ||
-        PAGE_TITLES.dashboard;
-
-    setText(
-        byId("pageTitle"),
-        config.title
-    );
-
-    setText(
-        byId("pageSubtitle"),
-        config.subtitle
-    );
-}
-
-function updateActiveNavigation(page) {
-    $$(".sidebar-link").forEach(
-        function (link) {
-            const target =
-                link.getAttribute(
-                    "data-page"
-                );
-
-            link.classList.toggle(
-                "active",
-                target === page
-            );
-        }
-    );
-}
-
-/* =========================================================
-   17. DASHBOARD
-   ========================================================= */
-
-async function renderDashboard(container) {
-    const startDate =
-        getFirstDayOfMonth();
-
-    const endDate =
-        getTodayString();
-
-    const result =
-        await apiRequest(
-            "dashboard",
-            {
-                startDate: startDate,
-                endDate: endDate
-            }
-        );
-
-    AppState.dashboard =
-        result.data || {};
-
-    const data =
-        AppState.dashboard;
-
-    const income =
-        toNumber(
-            data.totalIncome ||
-            data.income ||
-            0
-        );
-
-    const expense =
-        toNumber(
-            data.totalExpense ||
-            data.expense ||
-            0
-        );
-
-    const balance =
-        toNumber(
-            data.net ||
-            data.balance ||
-            income - expense
-        );
-
-    const cash =
-        toNumber(
-            data.cashBalance ||
-            data.cash ||
-            0
-        );
-
-    const bank =
-        toNumber(
-            data.bankBalance ||
-            data.bank ||
-            0
-        );
-
-    const recent =
-        data.recentTransactions ||
-        data.recent ||
-        [];
-
-    setHTML(
-        container,
-        `
-        <div class="content-header">
-            <div class="content-header-left">
-                <div class="section-title">
-                    ภาพรวมการเงิน
-                </div>
-                <div class="section-description">
-                    ประจำเดือน ${formatDate(startDate)} - ${formatDate(endDate)}
-                </div>
-            </div>
-
-            <div class="content-header-right">
-                <button
-                    type="button"
-                    class="btn btn-outline-primary"
-                    data-action="refresh-dashboard"
-                >
-                    ↻ รีเฟรช
-                </button>
-
-                <button
-                    type="button"
-                    class="btn btn-primary"
-                    data-action="new-income"
-                >
-                    ＋ บันทึกรายรับ
-                </button>
-
-                <button
-                    type="button"
-                    class="btn btn-danger"
-                    data-action="new-expense"
-                >
-                    ＋ บันทึกรายจ่าย
-                </button>
-            </div>
-        </div>
-
-        <div class="dashboard-grid">
-
-            <div class="card dashboard-stat-card income">
-                <div class="dashboard-stat-top">
-                    <div>
-                        <div class="dashboard-stat-label">
-                            รายรับเดือนนี้
-                        </div>
-
-                        <div class="dashboard-stat-value amount-income">
-                            ${formatMoney(income)}
-                        </div>
-                    </div>
-
-                    <div class="dashboard-stat-icon">
-                        ↑
-                    </div>
-                </div>
-
-                <div class="dashboard-stat-bottom">
-                    รายรับทั้งหมดในช่วงที่เลือก
-                </div>
-            </div>
-
-            <div class="card dashboard-stat-card expense">
-                <div class="dashboard-stat-top">
-                    <div>
-                        <div class="dashboard-stat-label">
-                            รายจ่ายเดือนนี้
-                        </div>
-
-                        <div class="dashboard-stat-value amount-expense">
-                            ${formatMoney(expense)}
-                        </div>
-                    </div>
-
-                    <div class="dashboard-stat-icon">
-                        ↓
-                    </div>
-                </div>
-
-                <div class="dashboard-stat-bottom">
-                    รายจ่ายทั้งหมดในช่วงที่เลือก
-                </div>
-            </div>
-
-            <div class="card dashboard-stat-card balance">
-                <div class="dashboard-stat-top">
-                    <div>
-                        <div class="dashboard-stat-label">
-                            เงินคงเหลือสุทธิ
-                        </div>
-
-                        <div class="dashboard-stat-value ${balance >= 0 ? "amount-positive" : "amount-negative"}">
-                            ${formatMoney(balance)}
-                        </div>
-                    </div>
-
-                    <div class="dashboard-stat-icon">
-                        ฿
-                    </div>
-                </div>
-
-                <div class="dashboard-stat-bottom">
-                    รายรับหักรายจ่าย
-                </div>
-            </div>
-
-            <div class="card dashboard-stat-card cash">
-                <div class="dashboard-stat-top">
-                    <div>
-                        <div class="dashboard-stat-label">
-                            เงินสด / ธนาคาร
-                        </div>
-
-                        <div class="dashboard-stat-value">
-                            ${formatMoney(cash + bank)}
-                        </div>
-                    </div>
-
-                    <div class="dashboard-stat-icon">
-                        ▣
-                    </div>
-                </div>
-
-                <div class="dashboard-stat-bottom">
-                    เงินสด ${formatMoney(cash)} / ธนาคาร ${formatMoney(bank)}
-                </div>
-            </div>
-
-        </div>
-
-        <div class="dashboard-grid-main mt-4">
-
-            <div class="card">
-                <div class="card-header">
-                    <div>
-                        <div class="card-title">
-                            รายการล่าสุด
-                        </div>
-
-                        <div class="card-subtitle">
-                            รายการทางการเงินล่าสุดของระบบ
-                        </div>
-                    </div>
-
-                    <button
-                        type="button"
-                        class="btn btn-sm btn-outline-primary"
-                        data-action="view-incomes"
-                    >
-                        ดูทั้งหมด
-                    </button>
-                </div>
-
-                <div class="card-body">
-                    ${renderRecentTransactions(
-                        recent
-                    )}
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="card-header">
-                    <div>
-                        <div class="card-title">
-                            สรุปบัญชี
-                        </div>
-
-                        <div class="card-subtitle">
-                            ยอดเงินตามประเภทบัญชี
-                        </div>
-                    </div>
-                </div>
-
-                <div class="card-body">
-                    ${renderDashboardAccounts(
-                        data.accounts ||
-                        data.accountBalances ||
-                        []
-                    )}
-                </div>
-            </div>
-
-        </div>
-
-        <div class="card mt-4">
-            <div class="card-header">
-                <div>
-                    <div class="card-title">
-                        เมนูด่วน
-                    </div>
-                    <div class="card-subtitle">
-                        ทำรายการที่ใช้บ่อย
-                    </div>
-                </div>
-            </div>
-
-            <div class="card-body">
-                <div class="quick-actions">
-
-                    <button
-                        type="button"
-                        class="quick-action"
-                        data-action="new-income"
-                    >
-                        <span class="quick-action-icon">
-                            ↑
-                        </span>
-                        <span class="quick-action-text">
-                            บันทึกรายรับ
-                        </span>
-                    </button>
-
-                    <button
-                        type="button"
-                        class="quick-action"
-                        data-action="new-expense"
-                    >
-                        <span class="quick-action-icon">
-                            ↓
-                        </span>
-                        <span class="quick-action-text">
-                            บันทึกรายจ่าย
-                        </span>
-                    </button>
-
-                    <button
-                        type="button"
-                        class="quick-action"
-                        data-action="new-transfer"
-                    >
-                        <span class="quick-action-icon">
-                            ⇄
-                        </span>
-                        <span class="quick-action-text">
-                            โอนเงิน
-                        </span>
-                    </button>
-
-                    <button
-                        type="button"
-                        class="quick-action"
-                        data-action="new-document"
-                    >
-                        <span class="quick-action-icon">
-                            ▤
-                        </span>
-                        <span class="quick-action-text">
-                            สร้างเอกสาร
-                        </span>
-                    </button>
-
-                </div>
-            </div>
-        </div>
-        `
-    );
-}
-
-function renderRecentTransactions(items) {
-    if (!items || !items.length) {
-        return `
-            <div class="empty-state">
-                <div class="empty-state-icon">
-                    ▤
-                </div>
-
-                <div class="empty-state-title">
-                    ยังไม่มีรายการ
-                </div>
-
-                <div class="empty-state-description">
-                    เมื่อมีการบันทึกรายรับ รายจ่าย หรือโอนเงิน
-                    รายการจะแสดงที่นี่
-                </div>
-            </div>
-        `;
-    }
-
-    return `
-        <div class="transaction-list">
-            ${items
-                .slice(0, 10)
-                .map(function (item) {
-                    const type =
-                        String(
-                            item.type ||
-                            item.transactionType ||
-                            ""
-                        ).toLowerCase();
-
-                    let typeClass =
-                        "transfer";
-
-                    let icon = "⇄";
-
-                    if (
-                        type === "income" ||
-                        type === "รายรับ"
-                    ) {
-                        typeClass = "income";
-                        icon = "↑";
-                    }
-
-                    if (
-                        type === "expense" ||
-                        type === "รายจ่าย"
-                    ) {
-                        typeClass = "expense";
-                        icon = "↓";
-                    }
-
-                    const amount =
-                        toNumber(
-                            item.amount
-                        );
-
-                    const sign =
-                        typeClass === "expense"
-                            ? "-"
-                            : typeClass === "income"
-                                ? "+"
-                                : "";
-
-                    return `
-                        <div class="transaction-item">
-
-                            <div class="transaction-icon ${typeClass}">
-                                ${icon}
-                            </div>
-
-                            <div class="transaction-info">
-                                <div class="transaction-title">
-                                    ${escapeHTML(
-                                        item.description ||
-                                        item.docNo ||
-                                        "รายการ"
-                                    )}
-                                </div>
-
-                                <div class="transaction-meta">
-                                    ${formatDate(
-                                        item.date
-                                    )}
-                                    ${item.accountName
-                                        ? " • " +
-                                          escapeHTML(
-                                              item.accountName
-                                          )
-                                        : ""}
-                                </div>
-                            </div>
-
-                            <div class="transaction-amount ${typeClass === "income" ? "amount-income" : typeClass === "expense" ? "amount-expense" : "amount-transfer"}">
-                                ${sign}${formatMoney(amount)}
-                            </div>
-
-                        </div>
-                    `;
-                })
-                .join("")}
-        </div>
-    `;
-}
-
-function renderDashboardAccounts(accounts) {
-    if (!accounts || !accounts.length) {
-        return `
-            <div class="empty-state">
-                <div class="empty-state-icon">
-                    ฿
-                </div>
-
-                <div class="empty-state-title">
-                    ยังไม่มีข้อมูลบัญชี
-                </div>
-
-                <div class="empty-state-description">
-                    เพิ่มบัญชีเงินสดหรือธนาคารเพื่อดูยอดคงเหลือ
-                </div>
-            </div>
-        `;
-    }
-
-    return `
-        <div class="transaction-list">
-            ${accounts
-                .slice(0, 10)
-                .map(function (account) {
-                    return `
-                        <div class="transaction-item">
-
-                            <div class="transaction-icon transfer">
-                                ฿
-                            </div>
-
-                            <div class="transaction-info">
-                                <div class="transaction-title">
-                                    ${escapeHTML(
-                                        account.name ||
-                                        "-"
-                                    )}
-                                </div>
-
-                                <div class="transaction-meta">
-                                    ${escapeHTML(
-                                        account.code ||
-                                        ""
-                                    )}
-                                </div>
-                            </div>
-
-                            <div class="transaction-amount">
-                                ${formatMoney(
-                                    account.balance ||
-                                    account.currentBalance ||
-                                    0
-                                )}
-                            </div>
-
-                        </div>
-                    `;
-                })
-                .join("")}
-        </div>
-    `;
-}
-
-/* =========================================================
-   18. INCOME PAGE
-   ========================================================= */
-
-async function renderIncomes(container) {
-    const result =
-        await apiRequest(
-            "list",
-            {
-                entity: "Income",
-                page:
-                    AppState.pagination.incomes.page,
-                pageSize:
-                    AppState.pagination.incomes.pageSize,
-                filters:
-                    AppState.filters.incomes
-            }
-        );
-
-    const data =
-        result.data || {};
-
-    AppState.incomes =
-        data.items ||
-        data.rows ||
-        data ||
-        [];
-
-    AppState.pagination.incomes.total =
-        toNumber(
-            data.total ||
-            AppState.incomes.length
-        );
-
-    setHTML(
-        container,
-        `
-        <div class="content-header">
-            <div class="content-header-left">
-                <div class="section-title">
-                    รายรับ
-                </div>
-
-                <div class="section-description">
-                    รายการรายรับทั้งหมด
-                </div>
-            </div>
-
-            <div class="content-header-right">
-                <button
-                    type="button"
-                    class="btn btn-primary"
-                    data-action="new-income"
-                >
-                    ＋ บันทึกรายรับ
-                </button>
-            </div>
-        </div>
-
-        <div class="filter-bar">
-
-            <div class="filter-item-wide">
-                <div class="search-box">
-                    <span class="search-box-icon">
-                        ⌕
-                    </span>
-
-                    <input
-                        type="text"
-                        class="form-control"
-                        id="incomeSearch"
-                        placeholder="ค้นหาเลขที่เอกสาร รายละเอียด หรือผู้ติดต่อ"
-                        value="${escapeAttribute(
-                            AppState.filters.incomes.search ||
-                            ""
-                        )}"
-                    >
-                </div>
-            </div>
-
-            <div class="filter-item">
-                <input
-                    type="date"
-                    class="form-control"
-                    id="incomeStartDate"
-                    value="${escapeAttribute(
-                        AppState.filters.incomes.startDate ||
-                        ""
-                    )}"
-                >
-            </div>
-
-            <div class="filter-item">
-                <input
-                    type="date"
-                    class="form-control"
-                    id="incomeEndDate"
-                    value="${escapeAttribute(
-                        AppState.filters.incomes.endDate ||
-                        ""
-                    )}"
-                >
-            </div>
-
-            <div class="filter-item">
-                <select
-                    class="form-control"
-                    id="incomeAccountFilter"
-                >
-                    <option value="">
-                        ทุกบัญชี
-                    </option>
-
-                    ${renderAccountOptions(
-                        AppState.filters.incomes.accountId ||
-                        ""
-                    )}
-                </select>
-            </div>
-
-            <div class="filter-actions">
-                <button
-                    type="button"
-                    class="btn btn-primary"
-                    data-action="filter-incomes"
-                >
-                    ค้นหา
-                </button>
-
-                <button
-                    type="button"
-                    class="btn btn-outline-secondary"
-                    data-action="clear-income-filter"
-                >
-                    ล้าง
-                </button>
-            </div>
-
-        </div>
-
-        <div class="card">
-
-            <div class="card-header">
-                <div>
-                    <div class="card-title">
-                        ทะเบียนรายรับ
-                    </div>
-
-                    <div class="card-subtitle">
-                        จำนวน ${formatNumber(
-                            AppState.pagination.incomes.total
-                        )} รายการ
-                    </div>
-                </div>
-            </div>
-
-            <div class="card-body">
-
-                <div class="table-wrapper">
-                    <table class="data-table official-table">
-
-                        <thead>
-                            <tr>
-                                <th>
-                                    วันที่
-                                </th>
-
-                                <th>
-                                    เลขที่เอกสาร
-                                </th>
-
-                                <th>
-                                    บัญชี
-                                </th>
-
-                                <th>
-                                    หมวดหมู่
-                                </th>
-
-                                <th>
-                                    รายละเอียด
-                                </th>
-
-                                <th class="text-right">
-                                    จำนวนเงิน
-                                </th>
-
-                                <th>
-                                    สถานะ
-                                </th>
-
-                                <th class="text-center">
-                                    จัดการ
-                                </th>
-                            </tr>
-                        </thead>
-
-                        <tbody>
-                            ${renderIncomeRows(
-                                AppState.incomes
-                            )}
-                        </tbody>
-
-                    </table>
-                </div>
-
-                ${renderPagination(
-                    "incomes"
-                )}
-
-            </div>
-        </div>
-        `
-    );
-}
-
-function renderIncomeRows(items) {
-    if (!items.length) {
-        return `
-            <tr>
-                <td
-                    colspan="8"
-                    class="table-empty"
-                >
-                    <div class="table-empty-icon">
-                        ↑
-                    </div>
-
-                    <div class="table-empty-text">
-                        ไม่พบรายการรายรับ
-                    </div>
-                </td>
-            </tr>
-        `;
-    }
-
-    return items
-        .map(function (item) {
-            return `
-                <tr>
-
-                    <td>
-                        ${formatDate(
-                            item.date
-                        )}
-                    </td>
-
-                    <td>
-                        <strong>
-                            ${escapeHTML(
-                                item.docNo ||
-                                "-"
-                            )}
-                        </strong>
-                    </td>
-
-                    <td>
-                        ${escapeHTML(
-                            getAccountName(
-                                item.accountId
-                            )
-                        )}
-                    </td>
-
-                    <td>
-                        ${escapeHTML(
-                            getCategoryName(
-                                item.categoryId
-                            )
-                        )}
-                    </td>
-
-                    <td>
-                        <div>
-                            ${escapeHTML(
-                                item.description ||
-                                "-"
-                            )}
-                        </div>
-
-                        ${
-                            item.counterpartyName
-                                ? `
-                                    <div class="text-muted">
-                                        ${escapeHTML(
-                                            item.counterpartyName
-                                        )}
-                                    </div>
-                                `
-                                : ""
-                        }
-                    </td>
-
-                    <td class="text-right amount-income">
-                        ${formatMoney(
-                            item.amount
-                        )}
-                    </td>
-
-                    <td>
-                        ${renderStatusBadge(
-                            item.status
-                        )}
-                    </td>
-
-                    <td>
-                        <div class="actions">
-
-                            <button
-                                type="button"
-                                class="btn btn-sm btn-outline-primary"
-                                data-action="edit-income"
-                                data-id="${escapeAttribute(
-                                    item.id
-                                )}"
-                            >
-                                แก้ไข
-                            </button>
-
-                            ${
-                                canDelete()
-                                    ? `
-                                        <button
-                                            type="button"
-                                            class="btn btn-sm btn-outline-danger"
-                                            data-action="delete-income"
-                                            data-id="${escapeAttribute(
-                                                item.id
-                                            )}"
-                                        >
-                                            ลบ
-                                        </button>
-                                    `
-                                    : ""
-                            }
-
-                        </div>
-                    </td>
-
-                </tr>
-            `;
-        })
-        .join("");
-}
-
-/* =========================================================
-   19. EXPENSE PAGE
-   ========================================================= */
-
-async function renderExpenses(container) {
-    const result =
-        await apiRequest(
-            "list",
-            {
-                entity: "Expense",
-                page:
-                    AppState.pagination.expenses.page,
-                pageSize:
-                    AppState.pagination.expenses.pageSize,
-                filters:
-                    AppState.filters.expenses
-            }
-        );
-
-    const data =
-        result.data || {};
-
-    AppState.expenses =
-        data.items ||
-        data.rows ||
-        data ||
-        [];
-
-    AppState.pagination.expenses.total =
-        toNumber(
-            data.total ||
-            AppState.expenses.length
-        );
-
-    setHTML(
-        container,
-        `
-        <div class="content-header">
-            <div class="content-header-left">
-                <div class="section-title">
-                    รายจ่าย
-                </div>
-
-                <div class="section-description">
-                    รายการรายจ่ายทั้งหมด
-                </div>
-            </div>
-
-            <div class="content-header-right">
-                <button
-                    type="button"
-                    class="btn btn-danger"
-                    data-action="new-expense"
-                >
-                    ＋ บันทึกรายจ่าย
-                </button>
-            </div>
-        </div>
-
-        <div class="filter-bar">
-
-            <div class="filter-item-wide">
-                <div class="search-box">
-                    <span class="search-box-icon">
-                        ⌕
-                    </span>
-
-                    <input
-                        type="text"
-                        class="form-control"
-                        id="expenseSearch"
-                        placeholder="ค้นหาเลขที่เอกสาร รายละเอียด หรือผู้ติดต่อ"
-                        value="${escapeAttribute(
-                            AppState.filters.expenses.search ||
-                            ""
-                        )}"
-                    >
-                </div>
-            </div>
-
-            <div class="filter-item">
-                <input
-                    type="date"
-                    class="form-control"
-                    id="expenseStartDate"
-                    value="${escapeAttribute(
-                        AppState.filters.expenses.startDate ||
-                        ""
-                    )}"
-                >
-            </div>
-
-            <div class="filter-item">
-                <input
-                    type="date"
-                    class="form-control"
-                    id="expenseEndDate"
-                    value="${escapeAttribute(
-                        AppState.filters.expenses.endDate ||
-                        ""
-                    )}"
-                >
-            </div>
-
-            <div class="filter-item">
-                <select
-                    class="form-control"
-                    id="expenseAccountFilter"
-                >
-                    <option value="">
-                        ทุกบัญชี
-                    </option>
-
-                    ${renderAccountOptions(
-                        AppState.filters.expenses.accountId ||
-                        ""
-                    )}
-                </select>
-            </div>
-
-            <div class="filter-actions">
-                <button
-                    type="button"
-                    class="btn btn-primary"
-                    data-action="filter-expenses"
-                >
-                    ค้นหา
-                </button>
-
-                <button
-                    type="button"
-                    class="btn btn-outline-secondary"
-                    data-action="clear-expense-filter"
-                >
-                    ล้าง
-                </button>
-            </div>
-
-        </div>
-
-        <div class="card">
-
-            <div class="card-header">
-                <div>
-                    <div class="card-title">
-                        ทะเบียนรายจ่าย
-                    </div>
-
-                    <div class="card-subtitle">
-                        จำนวน ${formatNumber(
-                            AppState.pagination.expenses.total
-                        )} รายการ
-                    </div>
-                </div>
-            </div>
-
-            <div class="card-body">
-
-                <div class="table-wrapper">
-                    <table class="data-table official-table">
-
-                        <thead>
-                            <tr>
-                                <th>
-                                    วันที่
-                                </th>
-
-                                <th>
-                                    เลขที่เอกสาร
-                                </th>
-
-                                <th>
-                                    บัญชี
-                                </th>
-
-                                <th>
-                                    หมวดหมู่
-                                </th>
-
-                                <th>
-                                    รายละเอียด
-                                </th>
-
-                                <th class="text-right">
-                                    จำนวนเงิน
-                                </th>
-
-                                <th>
-                                    สถานะ
-                                </th>
-
-                                <th class="text-center">
-                                    จัดการ
-                                </th>
-                            </tr>
-                        </thead>
-
-                        <tbody>
-                            ${renderExpenseRows(
-                                AppState.expenses
-                            )}
-                        </tbody>
-
-                    </table>
-                </div>
-
-                ${renderPagination(
-                    "expenses"
-                )}
-
-            </div>
-        </div>
-        `
-    );
-}
-
-function renderExpenseRows(items) {
-    if (!items.length) {
-        return `
-            <tr>
-                <td
-                    colspan="8"
-                    class="table-empty"
-                >
-                    <div class="table-empty-icon">
-                        ↓
-                    </div>
-
-                    <div class="table-empty-text">
-                        ไม่พบรายการรายจ่าย
-                    </div>
-                </td>
-            </tr>
-        `;
-    }
-
-    return items
-        .map(function (item) {
-            return `
-                <tr>
-
-                    <td>
-                        ${formatDate(
-                            item.date
-                        )}
-                    </td>
-
-                    <td>
-                        <strong>
-                            ${escapeHTML(
-                                item.docNo ||
-                                "-"
-                            )}
-                        </strong>
-                    </td>
-
-                    <td>
-                        ${escapeHTML(
-                            getAccountName(
-                                item.accountId
-                            )
-                        )}
-                    </td>
-
-                    <td>
-                        ${escapeHTML(
-                            getCategoryName(
-                                item.categoryId
-                            )
-                        )}
-                    </td>
-
-                    <td>
-                        <div>
-                            ${escapeHTML(
-                                item.description ||
-                                "-"
-                            )}
-                        </div>
-
-                        ${
-                            item.counterpartyName
-                                ? `
-                                    <div class="text-muted">
-                                        ${escapeHTML(
-                                            item.counterpartyName
-                                        )}
-                                    </div>
-                                `
-                                : ""
-                        }
-                    </td>
-
-                    <td class="text-right amount-expense">
-                        ${formatMoney(
-                            item.amount
-                        )}
-                    </td>
-
-                    <td>
-                        ${renderStatusBadge(
-                            item.status
-                        )}
-                    </td>
-
-                    <td>
-                        <div class="actions">
-
-                            <button
-                                type="button"
-                                class="btn btn-sm btn-outline-primary"
-                                data-action="edit-expense"
-                                data-id="${escapeAttribute(
-                                    item.id
-                                )}"
-                            >
-                                แก้ไข
-                            </button>
-
-                            ${
-                                canDelete()
-                                    ? `
-                                        <button
-                                            type="button"
-                                            class="btn btn-sm btn-outline-danger"
-                                            data-action="delete-expense"
-                                            data-id="${escapeAttribute(
-                                                item.id
-                                            )}"
-                                        >
-                                            ลบ
-                                        </button>
-                                    `
-                                    : ""
-                            }
-
-                        </div>
-                    </td>
-
-                </tr>
-            `;
-        })
-        .join("");
-}
-
-/* =========================================================
-   20. TRANSFER PAGE
-   ========================================================= */
-
-async function renderTransfers(container) {
-    const result =
-        await apiRequest(
-            "list",
-            {
-                entity: "Transfers",
-                page:
-                    AppState.pagination.transfers.page,
-                pageSize:
-                    AppState.pagination.transfers.pageSize,
-                filters:
-                    AppState.filters.transfers
-            }
-        );
-
-    const data =
-        result.data || {};
-
-    AppState.transfers =
-        data.items ||
-        data.rows ||
-        data ||
-        [];
-
-    AppState.pagination.transfers.total =
-        toNumber(
-            data.total ||
-            AppState.transfers.length
-        );
-
-    setHTML(
-        container,
-        `
-        <div class="content-header">
-            <div class="content-header-left">
-                <div class="section-title">
-                    โอนเงินระหว่างบัญชี
-                </div>
-
-                <div class="section-description">
-                    รายการโอนเงินภายในกิจการ
-                </div>
-            </div>
-
-            <div class="content-header-right">
-                <button
-                    type="button"
-                    class="btn btn-primary"
-                    data-action="new-transfer"
-                >
-                    ＋ บันทึกการโอน
-                </button>
-            </div>
-        </div>
-
-        <div class="card">
-
-            <div class="card-header">
-                <div>
-                    <div class="card-title">
-                        ทะเบียนการโอนเงิน
-                    </div>
-
-                    <div class="card-subtitle">
-                        จำนวน ${formatNumber(
-                            AppState.pagination.transfers.total
-                        )} รายการ
-                    </div>
-                </div>
-            </div>
-
-            <div class="card-body">
-
-                <div class="table-wrapper">
-                    <table class="data-table official-table">
-
-                        <thead>
-                            <tr>
-                                <th>
-                                    วันที่
-                                </th>
-
-                                <th>
-                                    เลขที่เอกสาร
-                                </th>
-
-                                <th>
-                                    จากบัญชี
-                                </th>
-
-                                <th>
-                                    ไปบัญชี
-                                </th>
-
-                                <th>
-                                    รายละเอียด
-                                </th>
-
-                                <th class="text-right">
-                                    จำนวนเงิน
-                                </th>
-
-                                <th>
-                                    สถานะ
-                                </th>
-
-                                <th class="text-center">
-                                    จัดการ
-                                </th>
-                            </tr>
-                        </thead>
-
-                        <tbody>
-                            ${renderTransferRows(
-                                AppState.transfers
-                            )}
-                        </tbody>
-
-                    </table>
-                </div>
-
-                ${renderPagination(
-                    "transfers"
-                )}
-
-            </div>
-        </div>
-        `
-    );
-}
-
-function renderTransferRows(items) {
-    if (!items.length) {
-        return `
-            <tr>
-                <td
-                    colspan="8"
-                    class="table-empty"
-                >
-                    <div class="table-empty-icon">
-                        ⇄
-                    </div>
-
-                    <div class="table-empty-text">
-                        ไม่พบรายการโอนเงิน
-                    </div>
-                </td>
-            </tr>
-        `;
-    }
-
-    return items
-        .map(function (item) {
-            return `
-                <tr>
-
-                    <td>
-                        ${formatDate(
-                            item.date
-                        )}
-                    </td>
-
-                    <td>
-                        <strong>
-                            ${escapeHTML(
-                                item.docNo ||
-                                "-"
-                            )}
-                        </strong>
-                    </td>
-
-                    <td>
-                        ${escapeHTML(
-                            getAccountName(
-                                item.fromAccountId
-                            )
-                        )}
-                    </td>
-
-                    <td>
-                        ${escapeHTML(
-                            getAccountName(
-                                item.toAccountId
-                            )
-                        )}
-                    </td>
-
-                    <td>
-                        ${escapeHTML(
-                            item.description ||
-                            "-"
-                        )}
-                    </td>
-
-                    <td class="text-right amount-transfer">
-                        ${formatMoney(
-                            item.amount
-                        )}
-                    </td>
-
-                    <td>
-                        ${renderStatusBadge(
-                            item.status
-                        )}
-                    </td>
-
-                    <td>
-                        <div class="actions">
-
-                            <button
-                                type="button"
-                                class="btn btn-sm btn-outline-primary"
-                                data-action="edit-transfer"
-                                data-id="${escapeAttribute(
-                                    item.id
-                                )}"
-                            >
-                                แก้ไข
-                            </button>
-
-                            ${
-                                canDelete()
-                                    ? `
-                                        <button
-                                            type="button"
-                                            class="btn btn-sm btn-outline-danger"
-                                            data-action="delete-transfer"
-                                            data-id="${escapeAttribute(
-                                                item.id
-                                            )}"
-                                        >
-                                            ลบ
-                                        </button>
-                                    `
-                                    : ""
-                            }
-
-                        </div>
-                    </td>
-
-                </tr>
-            `;
-        })
-        .join("");
-}
-
-/* =========================================================
-   21. ACCOUNTS PAGE
-   ========================================================= */
-
-async function renderAccounts(container) {
-    const result =
-        await apiRequest(
-            "list",
-            {
-                entity: "Accounts",
-                page:
-                    AppState.pagination.accounts.page,
-                pageSize:
-                    AppState.pagination.accounts.pageSize,
-                filters:
-                    AppState.filters.accounts
-            }
-        );
-
-    const data =
-        result.data || {};
-
-    AppState.accounts =
-        data.items ||
-        data.rows ||
-        data ||
-        [];
-
-    AppState.pagination.accounts.total =
-        toNumber(
-            data.total ||
-            AppState.accounts.length
-        );
-
-    setHTML(
-        container,
-        `
-        <div class="content-header">
-
-            <div class="content-header-left">
-                <div class="section-title">
-                    เงินสด / ธนาคาร
-                </div>
-
-                <div class="section-description">
-                    บัญชีที่ใช้รับและจ่ายเงิน
-                </div>
-            </div>
-
-            <div class="content-header-right">
-                <button
-                    type="button"
-                    class="btn btn-primary"
-                    data-action="new-account"
-                >
-                    ＋ เพิ่มบัญชี
-                </button>
-            </div>
-
-        </div>
-
-        <div class="account-grid">
-            ${renderAccountCards(
-                AppState.accounts
-            )}
-        </div>
-
-        <div class="card mt-4">
-
-            <div class="card-header">
-                <div>
-                    <div class="card-title">
-                        รายการบัญชี
-                    </div>
-
-                    <div class="card-subtitle">
-                        จำนวน ${formatNumber(
-                            AppState.pagination.accounts.total
-                        )} บัญชี
-                    </div>
-                </div>
-            </div>
-
-            <div class="card-body">
-
-                <div class="table-wrapper">
-                    <table class="data-table">
-
-                        <thead>
-                            <tr>
-                                <th>
-                                    รหัสบัญชี
-                                </th>
-
-                                <th>
-                                    ชื่อบัญชี
-                                </th>
-
-                                <th>
-                                    ประเภท
-                                </th>
-
-                                <th class="text-right">
-                                    ยอดยกมา
-                                </th>
-
-                                <th>
-                                    สถานะ
-                                </th>
-
-                                <th class="text-center">
-                                    จัดการ
-                                </th>
-                            </tr>
-                        </thead>
-
-                        <tbody>
-                            ${renderAccountRows(
-                                AppState.accounts
-                            )}
-                        </tbody>
-
-                    </table>
-                </div>
-
-                ${renderPagination(
-                    "accounts"
-                )}
-
-            </div>
-        </div>
-        `
-    );
-}
-
-function renderAccountCards(accounts) {
-    if (!accounts.length) {
-        return "";
-    }
-
-    return accounts
-        .map(function (account) {
-            const type =
-                String(
-                    account.type ||
-                    "OTHER"
-                ).toLowerCase();
-
-            return `
-                <div class="account-card">
-
-                    <div class="account-card-header">
-
-                        <div>
-                            <div class="account-code">
-                                ${escapeHTML(
-                                    account.code ||
-                                    "-"
-                                )}
-                            </div>
-
-                            <div class="account-name">
-                                ${escapeHTML(
-                                    account.name ||
-                                    "-"
-                                )}
-                            </div>
-
-                            <div class="account-type">
-                                ${getAccountTypeName(
-                                    account.type
-                                )}
-                            </div>
-                        </div>
-
-                        <span class="badge account-type-${escapeAttribute(
-                            type
-                        )}">
-                            ${getAccountTypeName(
-                                account.type
-                            )}
-                        </span>
-
-                    </div>
-
-                    <div class="account-balance">
-                        ${formatMoney(
-                            account.balance ||
-                            account.currentBalance ||
-                            account.openingBalance ||
-                            0
-                        )}
-                    </div>
-
-                    <div class="account-footer">
-
-                        <span>
-                            ยอดคงเหลือ
-                        </span>
-
-                        <span>
-                            ${account.active === false
-                                ? "ปิดใช้งาน"
-                                : "ใช้งาน"}
-                        </span>
-
-                    </div>
-
-                </div>
-            `;
-        })
-        .join("");
-}
-
-function getAccountTypeName(type) {
-    const types = {
-        CASH: "เงินสด",
-        BANK: "ธนาคาร",
-        WALLET: "กระเป๋าเงิน",
-        OTHER: "อื่น ๆ"
-    };
-
-    return (
-        types[type] ||
-        type ||
-        "อื่น ๆ"
-    );
-}
-
-function renderAccountRows(items) {
-    if (!items.length) {
-        return `
-            <tr>
-                <td
-                    colspan="6"
-                    class="table-empty"
-                >
-                    ไม่พบข้อมูลบัญชี
-                </td>
-            </tr>
-        `;
-    }
-
-    return items
-        .map(function (item) {
-            return `
-                <tr>
-
-                    <td>
-                        ${escapeHTML(
-                            item.code ||
-                            "-"
-                        )}
-                    </td>
-
-                    <td>
-                        <strong>
-                            ${escapeHTML(
-                                item.name ||
-                                "-"
-                            )}
-                        </strong>
-                    </td>
-
-                    <td>
-                        ${escapeHTML(
-                            getAccountTypeName(
-                                item.type
-                            )
-                        )}
-                    </td>
-
-                    <td class="text-right">
-                        ${formatMoney(
-                            item.openingBalance ||
-                            0
-                        )}
-                    </td>
-
-                    <td>
-                        ${item.active === false
-                            ? `
-                                <span class="badge badge-secondary">
-                                    ปิดใช้งาน
-                                </span>
-                            `
-                            : `
-                                <span class="badge badge-success">
-                                    ใช้งาน
-                                </span>
-                            `}
-                    </td>
-
-                    <td>
-                        <div class="actions">
-
-                            <button
-                                type="button"
-                                class="btn btn-sm btn-outline-primary"
-                                data-action="edit-account"
-                                data-id="${escapeAttribute(
-                                    item.id
-                                )}"
-                            >
-                                แก้ไข
-                            </button>
-
-                            ${
-                                canDelete()
-                                    ? `
-                                        <button
-                                            type="button"
-                                            class="btn btn-sm btn-outline-danger"
-                                            data-action="delete-account"
-                                            data-id="${escapeAttribute(
-                                                item.id
-                                            )}"
-                                        >
-                                            ลบ
-                                        </button>
-                                    `
-                                    : ""
-                            }
-
-                        </div>
-                    </td>
-
-                </tr>
-            `;
-        })
-        .join("");
-}
-
-/* =========================================================
-   22. CUSTOMER PAGE
-   ========================================================= */
-
-async function renderCustomers(container) {
-    const result =
-        await apiRequest(
-            "list",
-            {
-                entity: "Customers",
-                page:
-                    AppState.pagination.customers.page,
-                pageSize:
-                    AppState.pagination.customers.pageSize,
-                filters:
-                    AppState.filters.customers
-            }
-        );
-
-    const data =
-        result.data || {};
-
-    AppState.customers =
-        data.items ||
-        data.rows ||
-        data ||
-        [];
-
-    AppState.pagination.customers.total =
-        toNumber(
-            data.total ||
-            AppState.customers.length
-        );
-
-    setHTML(
-        container,
-        `
-        <div class="content-header">
-
-            <div class="content-header-left">
-                <div class="section-title">
-                    ลูกค้า
-                </div>
-
-                <div class="section-description">
-                    ข้อมูลลูกค้าและผู้ติดต่อ
-                </div>
-            </div>
-
-            <div class="content-header-right">
-                <button
-                    type="button"
-                    class="btn btn-primary"
-                    data-action="new-customer"
-                >
-                    ＋ เพิ่มลูกค้า
-                </button>
-            </div>
-
-        </div>
-
-        <div class="filter-bar">
-
-            <div class="filter-item-wide">
-                <div class="search-box">
-
-                    <span class="search-box-icon">
-                        ⌕
-                    </span>
-
-                    <input
-                        type="text"
-                        class="form-control"
-                        id="customerSearch"
-                        placeholder="ค้นหาชื่อลูกค้า รหัส เลขประจำตัวผู้เสียภาษี โทรศัพท์"
-                        value="${escapeAttribute(
-                            AppState.filters.customers.search ||
-                            ""
-                        )}"
-                    >
-
-                </div>
-            </div>
-
-            <div class="filter-actions">
-
-                <button
-                    type="button"
-                    class="btn btn-primary"
-                    data-action="filter-customers"
-                >
-                    ค้นหา
-                </button>
-
-                <button
-                    type="button"
-                    class="btn btn-outline-secondary"
-                    data-action="clear-customer-filter"
-                >
-                    ล้าง
-                </button>
-
-            </div>
-
-        </div>
-
-        <div class="card">
-
-            <div class="card-header">
-
-                <div>
-                    <div class="card-title">
-                        ทะเบียนลูกค้า
-                    </div>
-
-                    <div class="card-subtitle">
-                        จำนวน ${formatNumber(
-                            AppState.pagination.customers.total
-                        )} รายการ
-                    </div>
-                </div>
-
-            </div>
-
-            <div class="card-body">
-
-                <div class="table-wrapper">
-                    <table class="data-table">
-
-                        <thead>
-                            <tr>
-                                <th>
-                                    รหัส
-                                </th>
-
-                                <th>
-                                    ชื่อลูกค้า
-                                </th>
-
-                                <th>
-                                    เลขประจำตัวผู้เสียภาษี
-                                </th>
-
-                                <th>
-                                    ผู้ติดต่อ
-                                </th>
-
-                                <th>
-                                    โทรศัพท์
-                                </th>
-
-                                <th>
-                                    อีเมล
-                                </th>
-
-                                <th>
-                                    สถานะ
-                                </th>
-
-                                <th class="text-center">
-                                    จัดการ
-                                </th>
-                            </tr>
-                        </thead>
-
-                        <tbody>
-                            ${renderPartyRows(
-                                AppState.customers,
-                                "customer"
-                            )}
-                        </tbody>
-
-                    </table>
-                </div>
-
-                ${renderPagination(
-                    "customers"
-                )}
-
-            </div>
-        </div>
-        `
-    );
-}
-
-/* =========================================================
-   23. VENDOR PAGE
-   ========================================================= */
-
-async function renderVendors(container) {
-    const result =
-        await apiRequest(
-            "list",
-            {
-                entity: "Vendors",
-                page:
-                    AppState.pagination.vendors.page,
-                pageSize:
-                    AppState.pagination.vendors.pageSize,
-                filters:
-                    AppState.filters.vendors
-            }
-        );
-
-    const data =
-        result.data || {};
-
-    AppState.vendors =
-        data.items ||
-        data.rows ||
-        data ||
-        [];
-
-    AppState.pagination.vendors.total =
-        toNumber(
-            data.total ||
-            AppState.vendors.length
-        );
-
-    setHTML(
-        container,
-        `
-        <div class="content-header">
-
-            <div class="content-header-left">
-                <div class="section-title">
-                    ผู้จำหน่าย / เจ้าหนี้
-                </div>
-
-                <div class="section-description">
-                    ข้อมูลผู้จำหน่ายและเจ้าหนี้
-                </div>
-            </div>
-
-            <div class="content-header-right">
-
-                <button
-                    type="button"
-                    class="btn btn-primary"
-                    data-action="new-vendor"
-                >
-                    ＋ เพิ่มผู้จำหน่าย
-                </button>
-
-            </div>
-
-        </div>
-
-        <div class="filter-bar">
-
-            <div class="filter-item-wide">
-                <div class="search-box">
-
-                    <span class="search-box-icon">
-                        ⌕
-                    </span>
-
-                    <input
-                        type="text"
-                        class="form-control"
-                        id="vendorSearch"
-                        placeholder="ค้นหาชื่อผู้จำหน่าย รหัส เลขประจำตัวผู้เสียภาษี โทรศัพท์"
-                        value="${escapeAttribute(
-                            AppState.filters.vendors.search ||
-                            ""
-                        )}"
-                    >
-
-                </div>
-            </div>
-
-            <div class="filter-actions">
-
-                <button
-                    type="button"
-                    class="btn btn-primary"
-                    data-action="filter-vendors"
-                >
-                    ค้นหา
-                </button>
-
-                <button
-                    type="button"
-                    class="btn btn-outline-secondary"
-                    data-action="clear-vendor-filter"
-                >
-                    ล้าง
-                </button>
-
-            </div>
-
-        </div>
-
-        <div class="card">
-
-            <div class="card-header">
-
-                <div>
-                    <div class="card-title">
-                        ทะเบียนผู้จำหน่าย / เจ้าหนี้
-                    </div>
-
-                    <div class="card-subtitle">
-                        จำนวน ${formatNumber(
-                            AppState.pagination.vendors.total
-                        )} รายการ
-                    </div>
-                </div>
-
-            </div>
-
-            <div class="card-body">
-
-                <div class="table-wrapper">
-
-                    <table class="data-table">
-
-                        <thead>
-                            <tr>
-                                <th>
-                                    รหัส
-                                </th>
-
-                                <th>
-                                    ชื่อผู้จำหน่าย
-                                </th>
-
-                                <th>
-                                    เลขประจำตัวผู้เสียภาษี
-                                </th>
-
-                                <th>
-                                    ผู้ติดต่อ
-                                </th>
-
-                                <th>
-                                    โทรศัพท์
-                                </th>
-
-                                <th>
-                                    อีเมล
-                                </th>
-
-                                <th>
-                                    สถานะ
-                                </th>
-
-                                <th class="text-center">
-                                    จัดการ
-                                </th>
-                            </tr>
-                        </thead>
-
-                        <tbody>
-                            ${renderPartyRows(
-                                AppState.vendors,
-                                "vendor"
-                            )}
-                        </tbody>
-
-                    </table>
-
-                </div>
-
-                ${renderPagination(
-                    "vendors"
-                )}
-
-            </div>
-
-        </div>
-        `
-    );
-}
-
-function renderPartyRows(items, type) {
-    if (!items.length) {
-        return `
-            <tr>
-                <td
-                    colspan="8"
-                    class="table-empty"
-                >
-                    ไม่พบข้อมูล
-                </td>
-            </tr>
-        `;
-    }
-
-    const action =
-        type === "customer"
-            ? "customer"
-            : "vendor";
-
-    return items
-        .map(function (item) {
-            return `
-                <tr>
-
-                    <td>
-                        ${escapeHTML(
-                            item.code ||
-                            "-"
-                        )}
-                    </td>
-
-                    <td>
-                        <strong>
-                            ${escapeHTML(
-                                item.name ||
-                                "-"
-                            )}
-                        </strong>
-                    </td>
-
-                    <td>
-                        ${escapeHTML(
-                            item.taxId ||
-                            "-"
-                        )}
-                    </td>
-
-                    <td>
-                        ${escapeHTML(
-                            item.contactPerson ||
-                            "-"
-                        )}
-                    </td>
-
-                    <td>
-                        ${escapeHTML(
-                            item.phone ||
-                            "-"
-                        )}
-                    </td>
-
-                    <td>
-                        ${escapeHTML(
-                            item.email ||
-                            "-"
-                        )}
-                    </td>
-
-                    <td>
-                        ${item.active === false
-                            ? `
-                                <span class="badge badge-secondary">
-                                    ปิดใช้งาน
-                                </span>
-                            `
-                            : `
-                                <span class="badge badge-success">
-                                    ใช้งาน
-                                </span>
-                            `}
-                    </td>
-
-                    <td>
-                        <div class="actions">
-
-                            <button
-                                type="button"
-                                class="btn btn-sm btn-outline-primary"
-                                data-action="edit-${action}"
-                                data-id="${escapeAttribute(
-                                    item.id
-                                )}"
-                            >
-                                แก้ไข
-                            </button>
-
-                            ${
-                                canDelete()
-                                    ? `
-                                        <button
-                                            type="button"
-                                            class="btn btn-sm btn-outline-danger"
-                                            data-action="delete-${action}"
-                                            data-id="${escapeAttribute(
-                                                item.id
-                                            )}"
-                                        >
-                                            ลบ
-                                        </button>
-                                    `
-                                    : ""
-                            }
-
-                        </div>
-                    </td>
-
-                </tr>
-            `;
-        })
-        .join("");
-}
-
-/* =========================================================
-   24. DOCUMENT PAGE
-   ========================================================= */
-
-async function renderDocuments(container) {
-    const result =
-        await apiRequest(
-            "list",
-            {
-                entity: "Documents",
-                page:
-                    AppState.pagination.documents.page,
-                pageSize:
-                    AppState.pagination.documents.pageSize,
-                filters:
-                    AppState.filters.documents
-            }
-        );
-
-    const data =
-        result.data || {};
-
-    AppState.documents =
-        data.items ||
-        data.rows ||
-        data ||
-        [];
-
-    AppState.pagination.documents.total =
-        toNumber(
-            data.total ||
-            AppState.documents.length
-        );
-
-    setHTML(
-        container,
-        `
-        <div class="content-header">
-
-            <div class="content-header-left">
-
-                <div class="section-title">
-                    ทะเบียนเอกสาร
-                </div>
-
-                <div class="section-description">
-                    จัดการใบเสนอราคา ใบแจ้งหนี้ ใบวางบิล ใบเสร็จ และเอกสารอื่น ๆ
-                </div>
-
-            </div>
-
-            <div class="content-header-right">
-
-                <button
-                    type="button"
-                    class="btn btn-primary"
-                    data-action="new-document"
-                >
-                    ＋ สร้างเอกสาร
-                </button>
-
-            </div>
-
-        </div>
-
-        <div class="filter-bar">
-
-            <div class="filter-item-wide">
-
-                <div class="search-box">
-
-                    <span class="search-box-icon">
-                        ⌕
-                    </span>
-
-                    <input
-                        type="text"
-                        class="form-control"
-                        id="documentSearch"
-                        placeholder="ค้นหาเลขที่เอกสาร ชื่อลูกค้า หรือหัวข้อ"
-                        value="${escapeAttribute(
-                            AppState.filters.documents.search ||
-                            ""
-                        )}"
-                    >
-
-                </div>
-
-            </div>
-
-            <div class="filter-item">
-
-                <select
-                    class="form-control"
-                    id="documentTypeFilter"
-                >
-                    <option value="">
-                        เอกสารทุกประเภท
-                    </option>
-
-                    ${renderDocumentTypeOptions(
-                        AppState.filters.documents.docType ||
-                        ""
-                    )}
-                </select>
-
-            </div>
-
-            <div class="filter-item">
-
-                <select
-                    class="form-control"
-                    id="documentStatusFilter"
-                >
-                    <option value="">
-                        ทุกสถานะ
-                    </option>
-
-                    ${renderStatusOptions(
-                        AppState.filters.documents.status ||
-                        ""
-                    )}
-                </select>
-
-            </div>
-
-            <div class="filter-actions">
-
-                <button
-                    type="button"
-                    class="btn btn-primary"
-                    data-action="filter-documents"
-                >
-                    ค้นหา
-                </button>
-
-                <button
-                    type="button"
-                    class="btn btn-outline-secondary"
-                    data-action="clear-document-filter"
-                >
-                    ล้าง
-                </button>
-
-            </div>
-
-        </div>
-
-        <div class="card">
-
-            <div class="card-header">
-
-                <div>
-
-                    <div class="card-title">
-                        ทะเบียนเอกสาร
-                    </div>
-
-                    <div class="card-subtitle">
-                        จำนวน ${formatNumber(
-                            AppState.pagination.documents.total
-                        )} รายการ
-                    </div>
-
-                </div>
-
-            </div>
-
-            <div class="card-body">
-
-                <div class="table-wrapper">
-
-                    <table class="data-table">
-
-                        <thead>
-                            <tr>
-
-                                <th>
-                                    วันที่
-                                </th>
-
-                                <th>
-                                    เลขที่เอกสาร
-                                </th>
-
-                                <th>
-                                    ประเภท
-                                </th>
-
-                                <th>
-                                    ผู้ติดต่อ
-                                </th>
-
-                                <th>
-                                    หัวข้อ
-                                </th>
-
-                                <th class="text-right">
-                                    รวม
-                                </th>
-
-                                <th>
-                                    สถานะ
-                                </th>
-
-                                <th class="text-center">
-                                    จัดการ
-                                </th>
-
-                            </tr>
-                        </thead>
-
-                        <tbody>
-                            ${renderDocumentRows(
-                                AppState.documents
-                            )}
-                        </tbody>
-
-                    </table>
-
-                </div>
-
-                ${renderPagination(
-                    "documents"
-                )}
-
-            </div>
-
-        </div>
-        `
-    );
-}
-
-function renderDocumentRows(items) {
-    if (!items.length) {
-        return `
-            <tr>
-                <td
-                    colspan="8"
-                    class="table-empty"
-                >
-                    <div class="table-empty-icon">
-                        ▤
-                    </div>
-
-                    <div class="table-empty-text">
-                        ไม่พบเอกสาร
-                    </div>
-                </td>
-            </tr>
-        `;
-    }
-
-    return items
-        .map(function (item) {
-            return `
-                <tr>
-
-                    <td>
-                        ${formatDate(
-                            item.date
-                        )}
-                    </td>
-
-                    <td>
-                        <strong>
-                            ${escapeHTML(
-                                item.docNo ||
-                                "-"
-                            )}
-                        </strong>
-                    </td>
-
-                    <td>
-                        ${escapeHTML(
-                            getDocumentTypeName(
-                                item.docType
-                            )
-                        )}
-                    </td>
-
-                    <td>
-                        ${escapeHTML(
-                            item.partyName ||
-                            getCustomerName(
-                                item.customerId
-                            ) ||
-                            getVendorName(
-                                item.vendorId
-                            ) ||
-                            "-"
-                        )}
-                    </td>
-
-                    <td>
-                        ${escapeHTML(
-                            item.subject ||
-                            "-"
-                        )}
-                    </td>
-
-                    <td class="text-right">
-                        ${formatMoney(
-                            item.total ||
-                            0
-                        )}
-                    </td>
-
-                    <td>
-                        ${renderDocumentStatusBadge(
-                            item.status
-                        )}
-                    </td>
-
-                    <td>
-
-                        <div class="actions">
-
-                            <button
-                                type="button"
-                                class="btn btn-sm btn-outline-primary"
-                                data-action="view-document"
-                                data-id="${escapeAttribute(
-                                    item.id
-                                )}"
-                            >
-                                ดู
-                            </button>
-
-                            <button
-                                type="button"
-                                class="btn btn-sm btn-outline-secondary"
-                                data-action="edit-document"
-                                data-id="${escapeAttribute(
-                                    item.id
-                                )}"
-                            >
-                                แก้ไข
-                            </button>
-
-                            <button
-                                type="button"
-                                class="btn btn-sm btn-outline-primary"
-                                data-action="print-document"
-                                data-id="${escapeAttribute(
-                                    item.id
-                                )}"
-                            >
-                                พิมพ์
-                            </button>
-
-                            ${
-                                canDelete()
-                                    ? `
-                                        <button
-                                            type="button"
-                                            class="btn btn-sm btn-outline-danger"
-                                            data-action="cancel-document"
-                                            data-id="${escapeAttribute(
-                                                item.id
-                                            )}"
-                                        >
-                                            ยกเลิก
-                                        </button>
-                                    `
-                                    : ""
-                            }
-
-                        </div>
-
-                    </td>
-
-                </tr>
-            `;
-        })
-        .join("");
-}
-
-/* =========================================================
-   25. USERS PAGE
-   ========================================================= */
-
-async function renderUsers(container) {
-    if (!canManageUsers()) {
-        setHTML(
-            container,
-            `
-            <div class="card">
-                <div class="card-body">
-                    <div class="empty-state">
-                        <div class="error-icon">
-                            !
-                        </div>
-
-                        <div class="empty-state-title">
-                            ไม่มีสิทธิ์เข้าถึง
-                        </div>
-
-                        <div class="empty-state-description">
-                            เฉพาะผู้ดูแลระบบเท่านั้นที่สามารถจัดการผู้ใช้งานได้
-                        </div>
-                    </div>
-                </div>
-            </div>
-            `
-        );
-
-        return;
-    }
-
-    const result =
-        await apiRequest(
-            "list",
-            {
-                entity: "Users",
-                page:
-                    AppState.pagination.users.page,
-                pageSize:
-                    AppState.pagination.users.pageSize,
-                filters:
-                    AppState.filters.users
-            }
-        );
-
-    const data =
-        result.data || {};
-
-    AppState.users =
-        data.items ||
-        data.rows ||
-        data ||
-        [];
-
-    AppState.pagination.users.total =
-        toNumber(
-            data.total ||
-            AppState.users.length
-        );
-
-    setHTML(
-        container,
-        `
-        <div class="content-header">
-
-            <div class="content-header-left">
-
-                <div class="section-title">
-                    ผู้ใช้งานและสิทธิ์
-                </div>
-
-                <div class="section-description">
-                    จัดการบัญชีผู้ใช้งานและสิทธิ์การเข้าถึง
-                </div>
-
-            </div>
-
-            <div class="content-header-right">
-
-                <button
-                    type="button"
-                    class="btn btn-primary"
-                    data-action="new-user"
-                >
-                    ＋ เพิ่มผู้ใช้งาน
-                </button>
-
-            </div>
-
-        </div>
-
-        <div class="card">
-
-            <div class="card-header">
-
-                <div>
-
-                    <div class="card-title">
-                        ผู้ใช้งานระบบ
-                    </div>
-
-                    <div class="card-subtitle">
-                        จำนวน ${formatNumber(
-                            AppState.pagination.users.total
-                        )} คน
-                    </div>
-
-                </div>
-
-            </div>
-
-            <div class="card-body">
-
-                <div class="table-wrapper">
-
-                    <table class="data-table">
-
-                        <thead>
-
-                            <tr>
-
-                                <th>
-                                    ผู้ใช้งาน
-                                </th>
-
-                                <th>
-                                    ชื่อผู้ใช้
-                                </th>
-
-                                <th>
-                                    สิทธิ์
-                                </th>
-
-                                <th>
-                                    สถานะ
-                                </th>
-
-                                <th>
-                                    เข้าสู่ระบบล่าสุด
-                                </th>
-
-                                <th class="text-center">
-                                    จัดการ
-                                </th>
-
-                            </tr>
-
-                        </thead>
-
-                        <tbody>
-
-                            ${renderUserRows(
-                                AppState.users
-                            )}
-
-                        </tbody>
-
-                    </table>
-
-                </div>
-
-                ${renderPagination(
-                    "users"
-                )}
-
-            </div>
-
-        </div>
-        `
-    );
-}
-
-function renderUserRows(items) {
-    if (!items.length) {
-        return `
-            <tr>
-                <td
-                    colspan="6"
-                    class="table-empty"
-                >
-                    ไม่พบผู้ใช้งาน
-                </td>
-            </tr>
-        `;
-    }
-
-    return items
-        .map(function (item) {
-            const role =
-                String(
-                    item.role ||
-                    "user"
-                ).toLowerCase();
-
-            return `
-                <tr>
-
-                    <td>
-
-                        <div class="user-row">
-
-                            <div class="avatar avatar-sm">
-                                ${escapeHTML(
-                                    getAvatarLetters(
-                                        item.fullName ||
-                                        item.username
-                                    )
-                                )}
-                            </div>
-
-                            <div class="user-row-info">
-
-                                <div class="user-row-name">
-                                    ${escapeHTML(
-                                        item.fullName ||
-                                        "-"
-                                    )}
-                                </div>
-
-                                <div class="user-row-username">
-                                    ${escapeHTML(
-                                        item.username ||
-                                        "-"
-                                    )}
-                                </div>
-
-                            </div>
-
-                        </div>
-
-                    </td>
-
-                    <td>
-                        ${escapeHTML(
-                            item.username ||
-                            "-"
-                        )}
-                    </td>
-
-                    <td>
-                        <span class="badge role-${escapeAttribute(
-                            role
-                        )}">
-                            ${escapeHTML(
-                                getRoleName(
-                                    item.role
-                                )
-                            )}
-                        </span>
-                    </td>
-
-                    <td>
-                        ${item.active === false
-                            ? `
-                                <span class="badge badge-secondary">
-                                    ปิดใช้งาน
-                                </span>
-                            `
-                            : `
-                                <span class="badge badge-success">
-                                    ใช้งาน
-                                </span>
-                            `}
-                    </td>
-
-                    <td>
-                        ${formatDateTime(
-                            item.lastLoginAt
-                        )}
-                    </td>
-
-                    <td>
-
-                        <div class="actions">
-
-                            <button
-                                type="button"
-                                class="btn btn-sm btn-outline-primary"
-                                data-action="edit-user"
-                                data-id="${escapeAttribute(
-                                    item.id
-                                )}"
-                            >
-                                แก้ไข
-                            </button>
-
-                            ${
-                                item.username !== "sxaiq54"
-                                    ? `
-                                        <button
-                                            type="button"
-                                            class="btn btn-sm btn-outline-danger"
-                                            data-action="delete-user"
-                                            data-id="${escapeAttribute(
-                                                item.id
-                                            )}"
-                                        >
-                                            ปิดใช้งาน
-                                        </button>
-                                    `
-                                    : ""
-                            }
-
-                        </div>
-
-                    </td>
-
-                </tr>
-            `;
-        })
-        .join("");
-}
-
-/* =========================================================
-   26. SETTINGS PAGE
-   ========================================================= */
-
-async function renderSettings(container) {
-    if (!canManageSettings()) {
-        setHTML(
-            container,
-            `
-            <div class="card">
-                <div class="card-body">
-                    <div class="empty-state">
-                        <div class="error-icon">
-                            !
-                        </div>
-
-                        <div class="empty-state-title">
-                            ไม่มีสิทธิ์เข้าถึง
-                        </div>
-
-                        <div class="empty-state-description">
-                            เฉพาะผู้ดูแลระบบเท่านั้นที่สามารถแก้ไขตั้งค่ากิจการได้
-                        </div>
-                    </div>
-                </div>
-            </div>
-            `
-        );
-
-        return;
-    }
-
-    const result =
-        await apiRequest(
-            "settings",
-            {}
-        );
-
-    const data =
-        result.data || {};
-
-    AppState.settings =
-        data.settings ||
-        data ||
-        AppState.settings;
-
-    setHTML(
-        container,
-        `
-        <div class="content-header">
-
-            <div class="content-header-left">
-
-                <div class="section-title">
-                    ตั้งค่ากิจการ
-                </div>
-
-                <div class="section-description">
-                    ข้อมูลพื้นฐานของกิจการและระบบ
-                </div>
-
-            </div>
-
-        </div>
-
-        <div class="settings-layout">
-
-            <div class="settings-nav">
-
-                <button
-                    type="button"
-                    class="settings-nav-item active"
-                    data-settings-tab="business"
-                >
-                    🏢 ข้อมูลกิจการ
-                </button>
-
-                <button
-                    type="button"
-                    class="settings-nav-item"
-                    data-settings-tab="document"
-                >
-                    ▤ เอกสาร
-                </button>
-
-                <button
-                    type="button"
-                    class="settings-nav-item"
-                    data-settings-tab="system"
-                >
-                    ⚙ ระบบ
-                </button>
-
-            </div>
-
-            <div class="settings-panel">
-
-                <div
-                    class="card settings-tab-panel"
-                    data-settings-panel="business"
-                >
-
-                    <div class="card-header">
-                        <div class="card-title">
-                            ข้อมูลกิจการ
-                        </div>
-                    </div>
-
-                    <div class="card-body">
-
-                        <div class="form-row">
-
-                            <div class="form-group">
-
-                                <label class="form-label">
-                                    ชื่อกิจการ
-                                </label>
-
-                                <input
-                                    type="text"
-                                    class="form-control"
-                                    id="settingBusinessName"
-                                    value="${escapeAttribute(
-                                        AppState.settings.business_name ||
-                                        AppState.settings.company_name ||
-                                        ""
-                                    )}"
-                                >
-
-                            </div>
-
-                            <div class="form-group">
-
-                                <label class="form-label">
-                                    เลขประจำตัวผู้เสียภาษี
-                                </label>
-
-                                <input
-                                    type="text"
-                                    class="form-control"
-                                    id="settingTaxId"
-                                    value="${escapeAttribute(
-                                        AppState.settings.tax_id ||
-                                        ""
-                                    )}"
-                                >
-
-                            </div>
-
-                        </div>
-
-                        <div class="form-group">
-
-                            <label class="form-label">
-                                ที่อยู่
-                            </label>
-
-                            <textarea
-                                class="form-control"
-                                id="settingAddress"
-                            >${escapeHTML(
-                                AppState.settings.address ||
-                                ""
-                            )}</textarea>
-
-                        </div>
-
-                        <div class="form-row-3">
-
-                            <div class="form-group">
-
-                                <label class="form-label">
-                                    โทรศัพท์
-                                </label>
-
-                                <input
-                                    type="text"
-                                    class="form-control"
-                                    id="settingPhone"
-                                    value="${escapeAttribute(
-                                        AppState.settings.phone ||
-                                        ""
-                                    )}"
-                                >
-
-                            </div>
-
-                            <div class="form-group">
-
-                                <label class="form-label">
-                                    อีเมล
-                                </label>
-
-                                <input
-                                    type="email"
-                                    class="form-control"
-                                    id="settingEmail"
-                                    value="${escapeAttribute(
-                                        AppState.settings.email ||
-                                        ""
-                                    )}"
-                                >
-
-                            </div>
-
-                            <div class="form-group">
-
-                                <label class="form-label">
-                                    เว็บไซต์
-                                </label>
-
-                                <input
-                                    type="text"
-                                    class="form-control"
-                                    id="settingWebsite"
-                                    value="${escapeAttribute(
-                                        AppState.settings.website ||
-                                        ""
-                                    )}"
-                                >
-
-                            </div>
-
-                        </div>
-
-                        <div class="form-group">
-
-                            <label class="form-label">
-                                คำอธิบายกิจการ
-                            </label>
-
-                            <textarea
-                                class="form-control"
-                                id="settingDescription"
-                            >${escapeHTML(
-                                AppState.settings.business_description ||
-                                AppState.settings.company_description ||
-                                ""
-                            )}</textarea>
-
-                        </div>
-
-                        <div class="form-actions">
-
-                            <button
-                                type="button"
-                                class="btn btn-primary"
-                                data-action="save-business-settings"
-                            >
-                                บันทึกข้อมูล
-                            </button>
-
-                        </div>
-
-                    </div>
-
-                </div>
-
-                <div
-                    class="card settings-tab-panel hidden"
-                    data-settings-panel="document"
-                >
-
-                    <div class="card-header">
-                        <div class="card-title">
-                            การตั้งค่าเอกสาร
-                        </div>
-                    </div>
-
-                    <div class="card-body">
-
-                        <div class="info-message">
-                            <span>
-                                ℹ
-                            </span>
-
-                            <span>
-                                ระบบจะสร้างเลขที่เอกสารอัตโนมัติตามประเภทเอกสาร
-                            </span>
-                        </div>
-
-                        <div class="form-row-3 mt-3">
-
-                            ${renderDocumentPrefixSetting(
-                                "QUOTATION",
-                                "ใบเสนอราคา"
-                            )}
-
-                            ${renderDocumentPrefixSetting(
-                                "INVOICE",
-                                "ใบแจ้งหนี้"
-                            )}
-
-                            ${renderDocumentPrefixSetting(
-                                "BILLING",
-                                "ใบวางบิล"
-                            )}
-
-                            ${renderDocumentPrefixSetting(
-                                "RECEIPT",
-                                "ใบเสร็จรับเงิน"
-                            )}
-
-                            ${renderDocumentPrefixSetting(
-                                "PAYMENT_RECEIPT",
-                                "ใบรับเงิน"
-                            )}
-
-                            ${renderDocumentPrefixSetting(
-                                "RECEIVING_VOUCHER",
-                                "ใบสำคัญรับ"
-                            )}
-
-                            ${renderDocumentPrefixSetting(
-                                "PAYMENT_VOUCHER",
-                                "ใบสำคัญจ่าย"
-                            )}
-
-                            ${renderDocumentPrefixSetting(
-                                "PAYMENT_CERTIFICATE",
-                                "หนังสือรับรองการจ่ายเงิน"
-                            )}
-
-                            ${renderDocumentPrefixSetting(
-                                "OTHER",
-                                "อื่น ๆ"
-                            )}
-
-                        </div>
-
-                        <div class="form-actions">
-
-                            <button
-                                type="button"
-                                class="btn btn-primary"
-                                data-action="save-document-settings"
-                            >
-                                บันทึกการตั้งค่า
-                            </button>
-
-                        </div>
-
-                    </div>
-
-                </div>
-
-                <div
-                    class="card settings-tab-panel hidden"
-                    data-settings-panel="system"
-                >
-
-                    <div class="card-header">
-                        <div class="card-title">
-                            ระบบ
-                        </div>
-                    </div>
-
-                    <div class="card-body">
-
-                        <div class="info-grid">
-
-                            <div class="info-item">
-                                <div class="info-label">
-                                    ชื่อระบบ
-                                </div>
-
-                                <div class="info-value">
-                                    ${escapeHTML(
-                                        APP_CONFIG.APP_NAME
-                                    )}
-                                </div>
-                            </div>
-
-                            <div class="info-item">
-                                <div class="info-label">
-                                    เวอร์ชัน
-                                </div>
-
-                                <div class="info-value">
-                                    ${escapeHTML(
-                                        AppState.settings.version ||
-                                        "1.0.0"
-                                    )}
-                                </div>
-                            </div>
-
-                            <div class="info-item">
-                                <div class="info-label">
-                                    ผู้ใช้งานปัจจุบัน
-                                </div>
-
-                                <div class="info-value">
-                                    ${escapeHTML(
-                                        AppState.user.fullName ||
-                                        AppState.user.username
-                                    )}
-                                </div>
-                            </div>
-
-                            <div class="info-item">
-                                <div class="info-label">
-                                    สิทธิ์
-                                </div>
-
-                                <div class="info-value">
-                                    ${escapeHTML(
-                                        getRoleName(
-                                            AppState.user.role
-                                        )
-                                    )}
-                                </div>
-                            </div>
-
-                        </div>
-
-                    </div>
-
-                </div>
-
-            </div>
-
-        </div>
-        `
-    );
-}
-
-function renderDocumentPrefixSetting(
-    type,
-    label
-) {
-    const key =
-        "DOC_PREFIX_" +
-        type;
-
-    const value =
-        AppState.settings[key] ||
-        "";
-
-    return `
-        <div class="form-group">
-
-            <label class="form-label">
-                ${escapeHTML(
-                    label
-                )}
-            </label>
-
-            <input
-                type="text"
-                class="form-control document-prefix-setting"
-                data-setting-key="${escapeAttribute(
-                    key
-                )}"
-                value="${escapeAttribute(
-                    value
-                )}"
-                placeholder="เช่น INV"
-            >
-
-        </div>
-    `;
-}
-
-/* =========================================================
-   27. AUDIT LOG
-   ========================================================= */
-
-async function renderAuditLogs(container) {
-    if (!isAdmin()) {
-        setHTML(
-            container,
-            `
-            <div class="card">
-                <div class="card-body">
-                    <div class="empty-state">
-                        <div class="error-icon">
-                            !
-                        </div>
-
-                        <div class="empty-state-title">
-                            ไม่มีสิทธิ์เข้าถึง
-                        </div>
-
-                        <div class="empty-state-description">
-                            เฉพาะผู้ดูแลระบบเท่านั้นที่สามารถดู Audit Log ได้
-                        </div>
-                    </div>
-                </div>
-            </div>
-            `
-        );
-
-        return;
-    }
-
-    const result =
-        await apiRequest(
-            "auditlogs",
-            {
-                page:
-                    AppState.pagination.auditLogs.page,
-                pageSize:
-                    AppState.pagination.auditLogs.pageSize,
-                filters:
-                    AppState.filters.auditLogs
-            }
-        );
-
-    const data =
-        result.data || {};
-
-    AppState.auditLogs =
-        data.items ||
-        data.rows ||
-        data ||
-        [];
-
-    AppState.pagination.auditLogs.total =
-        toNumber(
-            data.total ||
-            AppState.auditLogs.length
-        );
-
-    setHTML(
-        container,
-        `
-        <div class="content-header">
-
-            <div class="content-header-left">
-
-                <div class="section-title">
-                    Audit Log
-                </div>
-
-                <div class="section-description">
-                    ประวัติการทำรายการและการใช้งานระบบ
-                </div>
-
-            </div>
-
-        </div>
-
-        <div class="card">
-
-            <div class="card-header">
-
-                <div class="card-title">
-                    ประวัติการใช้งาน
-                </div>
-
-            </div>
-
-            <div class="card-body">
-
-                <div class="table-wrapper">
-
-                    <table class="data-table">
-
-                        <thead>
-
-                            <tr>
-
-                                <th>
-                                    เวลา
-                                </th>
-
-                                <th>
-                                    ผู้ใช้งาน
-                                </th>
-
-                                <th>
-                                    Action
-                                </th>
-
-                                <th>
-                                    Entity
-                                </th>
-
-                                <th>
-                                    รายละเอียด
-                                </th>
-
-                            </tr>
-
-                        </thead>
-
-                        <tbody>
-
-                            ${renderAuditRows(
-                                AppState.auditLogs
-                            )}
-
-                        </tbody>
-
-                    </table>
-
-                </div>
-
-                ${renderPagination(
-                    "auditLogs"
-                )}
-
-            </div>
-
-        </div>
-        `
-    );
-}
-
-function renderAuditRows(items) {
-    if (!items.length) {
-        return `
-            <tr>
-                <td
-                    colspan="5"
-                    class="table-empty"
-                >
-                    ไม่พบประวัติการใช้งาน
-                </td>
-            </tr>
-        `;
-    }
-
-    return items
-        .map(function (item) {
-            return `
-                <tr>
-
-                    <td>
-                        ${formatDateTime(
-                            item.timestamp ||
-                            item.createdAt
-                        )}
-                    </td>
-
-                    <td>
-                        <strong>
-                            ${escapeHTML(
-                                item.username ||
-                                "-"
-                            )}
-                        </strong>
-                    </td>
-
-                    <td>
-                        <span class="badge badge-primary">
-                            ${escapeHTML(
-                                item.action ||
-                                "-"
-                            )}
-                        </span>
-                    </td>
-
-                    <td>
-                        ${escapeHTML(
-                            item.entity ||
-                            "-"
-                        )}
-                    </td>
-
-                    <td>
-
-                        <div class="audit-detail">
-                            ${escapeHTML(
-                                item.details ||
-                                ""
-                            )}
-                        </div>
-
-                    </td>
-
-                </tr>
-            `;
-        })
-        .join("");
-}
-
-/* =========================================================
-   28. REPORT PAGE
-   ========================================================= */
-
-async function renderReport(container) {
-    const startDate =
-        AppState.filters.report &&
-        AppState.filters.report.startDate
-            ? AppState.filters.report.startDate
-            : getFirstDayOfMonth();
-
-    const endDate =
-        AppState.filters.report &&
-        AppState.filters.report.endDate
-            ? AppState.filters.report.endDate
-            : getTodayString();
-
-    const result =
-        await apiRequest(
-            "report",
-            {
-                startDate: startDate,
-                endDate: endDate
-            }
-        );
-
-    AppState.report =
-        result.data || {};
-
-    const data =
-        AppState.report;
-
-    const income =
-        toNumber(
-            data.totalIncome ||
-            data.income ||
-            0
-        );
-
-    const expense =
-        toNumber(
-            data.totalExpense ||
-            data.expense ||
-            0
-        );
-
-    const net =
-        income - expense;
-
-    setHTML(
-        container,
-        `
-        <div class="content-header">
-
-            <div class="content-header-left">
-
-                <div class="section-title">
-                    รายงานการเงิน
-                </div>
-
-                <div class="section-description">
-                    สรุปข้อมูลระหว่างวันที่ ${formatDate(
-                        startDate
-                    )} ถึง ${formatDate(
-                        endDate
-                    )}
-                </div>
-
-            </div>
-
-            <div class="content-header-right">
-
-                <button
-                    type="button"
-                    class="btn btn-outline-primary"
-                    data-action="print-report"
-                >
-                    พิมพ์รายงาน
-                </button>
-
-            </div>
-
-        </div>
-
-        <div class="filter-bar">
-
-            <div class="filter-item">
-
-                <label class="form-label">
-                    ตั้งแต่วันที่
-                </label>
-
-                <input
-                    type="date"
-                    class="form-control"
-                    id="reportStartDate"
-                    value="${escapeAttribute(
-                        startDate
-                    )}"
-                >
-
-            </div>
-
-            <div class="filter-item">
-
-                <label class="form-label">
-                    ถึงวันที่
-                </label>
-
-                <input
-                    type="date"
-                    class="form-control"
-                    id="reportEndDate"
-                    value="${escapeAttribute(
-                        endDate
-                    )}"
-                >
-
-            </div>
-
-            <div class="filter-actions">
-
-                <button
-                    type="button"
-                    class="btn btn-primary"
-                    data-action="filter-report"
-                >
-                    แสดงรายงาน
-                </button>
-
-            </div>
-
-        </div>
-
-        <div class="dashboard-grid">
-
-            <div class="card dashboard-stat-card income">
-
-                <div class="dashboard-stat-label">
-                    รายรับ
-                </div>
-
-                <div class="dashboard-stat-value amount-income">
-                    ${formatMoney(
-                        income
-                    )}
-                </div>
-
-            </div>
-
-            <div class="card dashboard-stat-card expense">
-
-                <div class="dashboard-stat-label">
-                    รายจ่าย
-                </div>
-
-                <div class="dashboard-stat-value amount-expense">
-                    ${formatMoney(
-                        expense
-                    )}
-                </div>
-
-            </div>
-
-            <div class="card dashboard-stat-card balance">
-
-                <div class="dashboard-stat-label">
-                    สุทธิ
-                </div>
-
-                <div class="dashboard-stat-value ${net >= 0 ? "amount-positive" : "amount-negative"}">
-                    ${formatMoney(
-                        net
-                    )}
-                </div>
-
-            </div>
-
-            <div class="card dashboard-stat-card cash">
-
-                <div class="dashboard-stat-label">
-                    จำนวนรายการ
-                </div>
-
-                <div class="dashboard-stat-value">
-                    ${formatNumber(
-                        data.transactionCount ||
-                        data.totalTransactions ||
-                        0
-                    )}
-                </div>
-
-            </div>
-
-        </div>
-
-        <div class="dashboard-grid-two mt-4">
-
-            <div class="card">
-
-                <div class="card-header">
-                    <div class="card-title">
-                        รายรับตามหมวดหมู่
-                    </div>
-                </div>
-
-                <div class="card-body">
-                    ${renderReportCategoryRows(
-                        data.incomeByCategory ||
-                        []
-                    )}
-                </div>
-
-            </div>
-
-            <div class="card">
-
-                <div class="card-header">
-                    <div class="card-title">
-                        รายจ่ายตามหมวดหมู่
-                    </div>
-                </div>
-
-                <div class="card-body">
-                    ${renderReportCategoryRows(
-                        data.expenseByCategory ||
-                        []
-                    )}
-                </div>
-
-            </div>
-
-        </div>
-
-        <div class="card mt-4">
-
-            <div class="card-header">
-
-                <div class="card-title">
-                    สรุปยอดตามบัญชี
-                </div>
-
-            </div>
-
-            <div class="card-body">
-
-                <div class="table-wrapper">
-
-                    <table class="data-table">
-
-                        <thead>
-
-                            <tr>
-
-                                <th>
-                                    บัญชี
-                                </th>
-
-                                <th class="text-right">
-                                    รายรับ
-                                </th>
-
-                                <th class="text-right">
-                                    รายจ่าย
-                                </th>
-
-                                <th class="text-right">
-                                    สุทธิ
-                                </th>
-
-                            </tr>
-
-                        </thead>
-
-                        <tbody>
-
-                            ${renderReportAccountRows(
-                                data.accountSummary ||
-                                []
-                            )}
-
-                        </tbody>
-
-                    </table>
-
-                </div>
-
-            </div>
-
-        </div>
-        `
-    );
-}
-
-function renderReportCategoryRows(items) {
-    if (!items.length) {
-        return `
-            <div class="empty-state">
-                <div class="empty-state-icon">
-                    ▤
-                </div>
-
-                <div class="empty-state-description">
-                    ไม่มีข้อมูลในช่วงเวลาที่เลือก
-                </div>
-            </div>
-        `;
-    }
-
-    return items
-        .map(function (item) {
-            return `
-                <div class="report-total-row">
-
-                    <div class="report-total-label">
-                        ${escapeHTML(
-                            item.categoryName ||
-                            item.name ||
-                            "-"
-                        )}
-                    </div>
-
-                    <div class="report-total-value">
-                        ${formatMoney(
-                            item.amount ||
-                            0
-                        )}
-                    </div>
-
-                </div>
-            `;
-        })
-        .join("");
-}
-
-function renderReportAccountRows(items) {
-    if (!items.length) {
-        return `
-            <tr>
-                <td
-                    colspan="4"
-                    class="table-empty"
-                >
-                    ไม่มีข้อมูล
-                </td>
-            </tr>
-        `;
-    }
-
-    return items
-        .map(function (item) {
-            const income =
-                toNumber(
-                    item.income ||
-                    0
-                );
-
-            const expense =
-                toNumber(
-                    item.expense ||
-                    0
-                );
-
-            return `
-                <tr>
-
-                    <td>
-                        ${escapeHTML(
-                            item.accountName ||
-                            item.name ||
-                            "-"
-                        )}
-                    </td>
-
-                    <td class="text-right amount-income">
-                        ${formatMoney(
-                            income
-                        )}
-                    </td>
-
-                    <td class="text-right amount-expense">
-                        ${formatMoney(
-                            expense
-                        )}
-                    </td>
-
-                    <td class="text-right">
-                        ${formatMoney(
-                            income - expense
-                        )}
-                    </td>
-
-                </tr>
-            `;
-        })
-        .join("");
-}
-
-/* =========================================================
-   29. PAGINATION
-   ========================================================= */
-
-function formatNumber(value) {
-    return new Intl.NumberFormat(
-        APP_CONFIG.LOCALE
-    ).format(
-        toNumber(value)
-    );
-}
-
-function renderPagination(entity) {
-    const pagination =
-        AppState.pagination[entity];
-
-    if (!pagination) {
-        return "";
-    }
-
-    const page =
-        pagination.page || 1;
-
-    const pageSize =
-        pagination.pageSize ||
-        APP_CONFIG.PAGE_SIZE;
-
-    const total =
-        pagination.total || 0;
-
-    const totalPages =
-        Math.max(
-            1,
-            Math.ceil(
-                total / pageSize
-            )
-        );
-
-    if (totalPages <= 1) {
-        return `
-            <div class="pagination-wrapper">
-
-                <div class="pagination-info">
-                    แสดง ${total ? 1 : 0} - ${total}
-                    จาก ${formatNumber(total)} รายการ
-                </div>
-
-            </div>
-        `;
-    }
-
-    const start =
-        total === 0
-            ? 0
-            : ((page - 1) * pageSize) + 1;
-
-    const end =
-        Math.min(
-            page * pageSize,
-            total
-        );
-
-    const buttons = [];
-
-    buttons.push(`
-        <button
-            type="button"
-            class="page-link ${page <= 1 ? "disabled" : ""}"
-            data-action="page"
-            data-entity="${escapeAttribute(
-                entity
-            )}"
-            data-page="${page - 1}"
-            ${page <= 1 ? "disabled" : ""}
-        >
-            ‹
-        </button>
-    `);
-
-    const firstPage =
-        Math.max(
-            1,
-            page - 2
-        );
-
-    const lastPage =
-        Math.min(
-            totalPages,
-            page + 2
-        );
-
-    if (firstPage > 1) {
-        buttons.push(`
-            <button
-                type="button"
-                class="page-link"
-                data-action="page"
-                data-entity="${escapeAttribute(
-                    entity
-                )}"
-                data-page="1"
-            >
-                1
-            </button>
-        `);
-
-        if (firstPage > 2) {
-            buttons.push(`
-                <span class="page-link disabled">
-                    …
-                </span>
-            `);
-        }
-    }
-
-    for (
-        let current = firstPage;
-        current <= lastPage;
-        current++
-    ) {
-        buttons.push(`
-            <button
-                type="button"
-                class="page-link ${current === page ? "active" : ""}"
-                data-action="page"
-                data-entity="${escapeAttribute(
-                    entity
-                )}"
-                data-page="${current}"
-            >
-                ${current}
-            </button>
-        `);
-    }
-
-    if (lastPage < totalPages) {
-        if (lastPage < totalPages - 1) {
-            buttons.push(`
-                <span class="page-link disabled">
-                    …
-                </span>
-            `);
+    async function handleLoginSubmit(event) {
+        if (event) {
+            event.preventDefault();
+            event.stopPropagation();
         }
 
-        buttons.push(`
-            <button
-                type="button"
-                class="page-link"
-                data-action="page"
-                data-entity="${escapeAttribute(
-                    entity
-                )}"
-                data-page="${totalPages}"
-            >
-                ${totalPages}
-            </button>
-        `);
-    }
+        const usernameElement =
+            byId('username') ||
+            byId('loginUsername') ||
+            $('[name="username"]');
 
-    buttons.push(`
-        <button
-            type="button"
-            class="page-link ${page >= totalPages ? "disabled" : ""}"
-            data-action="page"
-            data-entity="${escapeAttribute(
-                entity
-            )}"
-            data-page="${page + 1}"
-            ${page >= totalPages ? "disabled" : ""}
-        >
-            ›
-        </button>
-    `);
+        const passwordElement =
+            byId('password') ||
+            byId('loginPassword') ||
+            $('[name="password"]');
 
-    return `
-        <div class="pagination-wrapper">
+        if (!usernameElement || !passwordElement) {
+            showToast(
+                'ไม่พบช่องชื่อผู้ใช้หรือรหัสผ่านในหน้า Login',
+                'error'
+            );
 
-            <div class="pagination-info">
-                แสดง ${formatNumber(start)}
-                - ${formatNumber(end)}
-                จาก ${formatNumber(total)} รายการ
-            </div>
-
-            <div class="pagination">
-                ${buttons.join("")}
-            </div>
-
-        </div>
-    `;
-}
-
-/* =========================================================
-   30. MODAL SYSTEM
-   ========================================================= */
-
-function ensureModalContainer() {
-    let container =
-        byId("modalContainer");
-
-    if (!container) {
-        container = createElement(
-            "div",
-            "modal-overlay"
-        );
-
-        container.id =
-            "modalContainer";
-
-        document.body.appendChild(
-            container
-        );
-    }
-
-    return container;
-}
-
-function openModal(options) {
-    const config =
-        options || {};
-
-    const overlay =
-        ensureModalContainer();
-
-    const modalClass =
-        config.size
-            ? "modal " +
-              config.size
-            : "modal";
-
-    setHTML(
-        overlay,
-        `
-        <div class="${modalClass}" role="dialog" aria-modal="true">
-
-            <div class="modal-header">
-
-                <div class="modal-title">
-                    ${escapeHTML(
-                        config.title ||
-                        ""
-                    )}
-                </div>
-
-                <button
-                    type="button"
-                    class="modal-close"
-                    data-action="close-modal"
-                    aria-label="ปิด"
-                >
-                    ×
-                </button>
-
-            </div>
-
-            <div class="modal-body">
-                ${
-                    config.content ||
-                    ""
-                }
-            </div>
-
-            ${
-                config.footer === false
-                    ? ""
-                    : `
-                        <div class="modal-footer">
-                            ${
-                                config.footer ||
-                                `
-                                    <button
-                                        type="button"
-                                        class="btn btn-outline-secondary"
-                                        data-action="close-modal"
-                                    >
-                                        ปิด
-                                    </button>
-                                `
-                            }
-                        </div>
-                    `
-            }
-
-        </div>
-        `
-    );
-
-    overlay.classList.add("show");
-
-    return overlay;
-}
-
-function closeModal() {
-    const overlay =
-        byId("modalContainer");
-
-    if (!overlay) {
-        return;
-    }
-
-    overlay.classList.remove("show");
-
-    setTimeout(function () {
-        if (
-            overlay &&
-            overlay.parentNode
-        ) {
-            overlay.remove();
+            return false;
         }
-    }, 150);
-}
 
-/* =========================================================
-   31. INCOME MODAL
-   ========================================================= */
+        const username =
+            usernameElement.value.trim();
 
-function openIncomeModal(id) {
-    let item = null;
+        const password =
+            passwordElement.value;
 
-    if (id) {
-        item = getItemById(
-            AppState.incomes,
-            id
-        );
-    }
-
-    const isEdit =
-        Boolean(item);
-
-    const form =
-        item
-            ? Object.assign(
-                {},
-                AppState.incomeForm,
-                item
-            )
-            : Object.assign(
-                {},
-                AppState.incomeForm,
-                {
-                    date: getTodayString()
-                }
+        if (!username) {
+            showToast(
+                'กรุณากรอกชื่อผู้ใช้',
+                'warning'
             );
 
-    const content = `
-        <form id="incomeForm">
-
-            <input
-                type="hidden"
-                id="incomeId"
-                value="${escapeAttribute(
-                    form.id ||
-                    ""
-                )}"
-            >
-
-            <div class="form-row">
-
-                <div class="form-group">
-
-                    <label class="form-label required">
-                        วันที่
-                    </label>
-
-                    <input
-                        type="date"
-                        class="form-control"
-                        id="incomeDate"
-                        required
-                        value="${escapeAttribute(
-                            formatDateInput(
-                                form.date
-                            )
-                        )}"
-                    >
-
-                </div>
-
-                <div class="form-group">
-
-                    <label class="form-label">
-                        เลขที่เอกสาร
-                    </label>
-
-                    <input
-                        type="text"
-                        class="form-control"
-                        id="incomeDocNo"
-                        value="${escapeAttribute(
-                            form.docNo ||
-                            ""
-                        )}"
-                        placeholder="เว้นว่างเพื่อให้ระบบกำหนด"
-                    >
-
-                </div>
-
-            </div>
-
-            <div class="form-row">
-
-                <div class="form-group">
-
-                    <label class="form-label required">
-                        บัญชีรับเงิน
-                    </label>
-
-                    <select
-                        class="form-control"
-                        id="incomeAccountId"
-                        required
-                    >
-                        <option value="">
-                            เลือกบัญชี
-                        </option>
-
-                        ${renderAccountOptions(
-                            form.accountId ||
-                            ""
-                        )}
-                    </select>
-
-                </div>
-
-                <div class="form-group">
-
-                    <label class="form-label required">
-                        หมวดหมู่
-                    </label>
-
-                    <select
-                        class="form-control"
-                        id="incomeCategoryId"
-                        required
-                    >
-                        <option value="">
-                            เลือกหมวดหมู่รายรับ
-                        </option>
-
-                        ${renderCategoryOptions(
-                            "INCOME",
-                            form.categoryId ||
-                            ""
-                        )}
-                    </select>
-
-                </div>
-
-            </div>
-
-            <div class="form-row">
-
-                <div class="form-group">
-
-                    <label class="form-label">
-                        ประเภทคู่ค้า
-                    </label>
-
-                    <select
-                        class="form-control"
-                        id="incomeCounterpartyType"
-                    >
-                        <option value="">
-                            ไม่ระบุ
-                        </option>
-
-                        <option
-                            value="CUSTOMER"
-                            ${form.counterpartyType === "CUSTOMER" ? "selected" : ""}
-                        >
-                            ลูกค้า
-                        </option>
-
-                        <option
-                            value="OTHER"
-                            ${form.counterpartyType === "OTHER" ? "selected" : ""}
-                        >
-                            อื่น ๆ
-                        </option>
-
-                    </select>
-
-                </div>
-
-                <div class="form-group">
-
-                    <label class="form-label">
-                        ผู้ติดต่อ
-                    </label>
-
-                    <select
-                        class="form-control"
-                        id="incomeCounterpartyId"
-                    >
-                        <option value="">
-                            ไม่ระบุ
-                        </option>
-
-                        ${renderCustomerOptions(
-                            form.counterpartyId ||
-                            ""
-                        )}
-                    </select>
-
-                </div>
-
-            </div>
-
-            <div class="form-group">
-
-                <label class="form-label required">
-                    รายละเอียด
-                </label>
-
-                <input
-                    type="text"
-                    class="form-control"
-                    id="incomeDescription"
-                    required
-                    value="${escapeAttribute(
-                        form.description ||
-                        ""
-                    )}"
-                    placeholder="รายละเอียดรายการ"
-                >
-
-            </div>
-
-            <div class="form-row">
-
-                <div class="form-group">
-
-                    <label class="form-label required">
-                        จำนวนเงิน
-                    </label>
-
-                    <div class="input-prefix">
-
-                        <span class="input-prefix-symbol">
-                            ฿
-                        </span>
-
-                        <input
-                            type="number"
-                            class="form-control currency-input"
-                            id="incomeAmount"
-                            required
-                            min="0"
-                            step="0.01"
-                            value="${escapeAttribute(
-                                form.amount ||
-                                ""
-                            )}"
-                        >
-
-                    </div>
-
-                </div>
-
-                <div class="form-group">
-
-                    <label class="form-label">
-                        วิธีรับเงิน
-                    </label>
-
-                    <select
-                        class="form-control"
-                        id="incomePaymentMethod"
-                    >
-
-                        <option value="">
-                            เลือกวิธีรับเงิน
-                        </option>
-
-                        <option
-                            value="CASH"
-                            ${form.paymentMethod === "CASH" ? "selected" : ""}
-                        >
-                            เงินสด
-                        </option>
-
-                        <option
-                            value="BANK_TRANSFER"
-                            ${form.paymentMethod === "BANK_TRANSFER" ? "selected" : ""}
-                        >
-                            โอนเงิน
-                        </option>
-
-                        <option
-                            value="CARD"
-                            ${form.paymentMethod === "CARD" ? "selected" : ""}
-                        >
-                            บัตร
-                        </option>
-
-                        <option
-                            value="OTHER"
-                            ${form.paymentMethod === "OTHER" ? "selected" : ""}
-                        >
-                            อื่น ๆ
-                        </option>
-
-                    </select>
-
-                </div>
-
-            </div>
-
-            <div class="form-group">
-
-                <label class="form-label">
-                    เลขอ้างอิง
-                </label>
-
-                <input
-                    type="text"
-                    class="form-control"
-                    id="incomeReference"
-                    value="${escapeAttribute(
-                        form.reference ||
-                        ""
-                    )}"
-                    placeholder="เลขอ้างอิง / หมายเหตุ"
-                >
-
-            </div>
-
-        </form>
-    `;
-
-    const footer = `
-        <button
-            type="button"
-            class="btn btn-outline-secondary"
-            data-action="close-modal"
-        >
-            ยกเลิก
-        </button>
-
-        <button
-            type="button"
-            class="btn btn-primary"
-            data-action="save-income"
-        >
-            ${isEdit ? "บันทึกการแก้ไข" : "บันทึกรายรับ"}
-        </button>
-    `;
-
-    openModal({
-        title:
-            isEdit
-                ? "แก้ไขรายรับ"
-                : "บันทึกรายรับ",
-        content: content,
-        footer: footer,
-        size: "modal-md"
-    });
-}
-
-async function saveIncomeFromModal() {
-    const form =
-        byId("incomeForm");
-
-    if (!form) {
-        return;
-    }
-
-    if (!form.checkValidity()) {
-        form.reportValidity();
-        return;
-    }
-
-    const data = {
-        id:
-            valueOf("incomeId"),
-        date:
-            valueOf("incomeDate"),
-        docNo:
-            valueOf("incomeDocNo"),
-        accountId:
-            valueOf("incomeAccountId"),
-        categoryId:
-            valueOf("incomeCategoryId"),
-        counterpartyType:
-            valueOf("incomeCounterpartyType"),
-        counterpartyId:
-            valueOf("incomeCounterpartyId"),
-        counterpartyName:
-            getSelectedText(
-                "incomeCounterpartyId"
-            ),
-        description:
-            valueOf("incomeDescription"),
-        amount:
-            toNumber(
-                valueOf("incomeAmount")
-            ),
-        paymentMethod:
-            valueOf("incomePaymentMethod"),
-        reference:
-            valueOf("incomeReference"),
-        status: "ACTIVE"
-    };
-
-    if (data.amount <= 0) {
-        showToast(
-            "ข้อมูลไม่ถูกต้อง",
-            "จำนวนเงินต้องมากกว่า 0",
-            "warning"
-        );
-        return;
-    }
-
-    showLoading(
-        "กำลังบันทึกรายรับ..."
-    );
-
-    try {
-        await apiRequest(
-            "saveincome",
-            {
-                data: data
-            }
-        );
-
-        closeModal();
-
-        showToast(
-            "บันทึกสำเร็จ",
-            "บันทึกรายรับเรียบร้อยแล้ว",
-            "success"
-        );
-
-        await navigateTo(
-            "incomes"
-        );
-    } catch (error) {
-        handleApiError(error);
-    } finally {
-        hideLoading();
-    }
-}
-
-/* =========================================================
-   32. EXPENSE MODAL
-   ========================================================= */
-
-function openExpenseModal(id) {
-    let item = null;
-
-    if (id) {
-        item = getItemById(
-            AppState.expenses,
-            id
-        );
-    }
-
-    const isEdit =
-        Boolean(item);
-
-    const form =
-        item
-            ? Object.assign(
-                {},
-                AppState.expenseForm,
-                item
-            )
-            : Object.assign(
-                {},
-                AppState.expenseForm,
-                {
-                    date: getTodayString()
-                }
+            usernameElement.focus();
+
+            return false;
+        }
+
+        if (!password) {
+            showToast(
+                'กรุณากรอกรหัสผ่าน',
+                'warning'
             );
 
-    const content = `
-        <form id="expenseForm">
+            passwordElement.focus();
 
-            <input
-                type="hidden"
-                id="expenseId"
-                value="${escapeAttribute(
-                    form.id ||
-                    ""
-                )}"
-            >
-
-            <div class="form-row">
-
-                <div class="form-group">
-
-                    <label class="form-label required">
-                        วันที่
-                    </label>
-
-                    <input
-                        type="date"
-                        class="form-control"
-                        id="expenseDate"
-                        required
-                        value="${escapeAttribute(
-                            formatDateInput(
-                                form.date
-                            )
-                        )}"
-                    >
-
-                </div>
-
-                <div class="form-group">
-
-                    <label class="form-label">
-                        เลขที่เอกสาร
-                    </label>
-
-                    <input
-                        type="text"
-                        class="form-control"
-                        id="expenseDocNo"
-                        value="${escapeAttribute(
-                            form.docNo ||
-                            ""
-                        )}"
-                        placeholder="เว้นว่างเพื่อให้ระบบกำหนด"
-                    >
-
-                </div>
-
-            </div>
-
-            <div class="form-row">
-
-                <div class="form-group">
-
-                    <label class="form-label required">
-                        บัญชีจ่ายเงิน
-                    </label>
-
-                    <select
-                        class="form-control"
-                        id="expenseAccountId"
-                        required
-                    >
-                        <option value="">
-                            เลือกบัญชี
-                        </option>
-
-                        ${renderAccountOptions(
-                            form.accountId ||
-                            ""
-                        )}
-                    </select>
-
-                </div>
-
-                <div class="form-group">
-
-                    <label class="form-label required">
-                        หมวดหมู่
-                    </label>
-
-                    <select
-                        class="form-control"
-                        id="expenseCategoryId"
-                        required
-                    >
-                        <option value="">
-                            เลือกหมวดหมู่รายจ่าย
-                        </option>
-
-                        ${renderCategoryOptions(
-                            "EXPENSE",
-                            form.categoryId ||
-                            ""
-                        )}
-                    </select>
-
-                </div>
-
-            </div>
-
-            <div class="form-row">
-
-                <div class="form-group">
-
-                    <label class="form-label">
-                        ประเภทคู่ค้า
-                    </label>
-
-                    <select
-                        class="form-control"
-                        id="expenseCounterpartyType"
-                    >
-
-                        <option value="">
-                            ไม่ระบุ
-                        </option>
-
-                        <option
-                            value="VENDOR"
-                            ${form.counterpartyType === "VENDOR" ? "selected" : ""}
-                        >
-                            ผู้จำหน่าย / เจ้าหนี้
-                        </option>
-
-                        <option
-                            value="OTHER"
-                            ${form.counterpartyType === "OTHER" ? "selected" : ""}
-                        >
-                            อื่น ๆ
-                        </option>
-
-                    </select>
-
-                </div>
-
-                <div class="form-group">
-
-                    <label class="form-label">
-                        ผู้ติดต่อ
-                    </label>
-
-                    <select
-                        class="form-control"
-                        id="expenseCounterpartyId"
-                    >
-
-                        <option value="">
-                            ไม่ระบุ
-                        </option>
-
-                        ${renderVendorOptions(
-                            form.counterpartyId ||
-                            ""
-                        )}
-
-                    </select>
-
-                </div>
-
-            </div>
-
-            <div class="form-group">
-
-                <label class="form-label required">
-                    รายละเอียด
-                </label>
-
-                <input
-                    type="text"
-                    class="form-control"
-                    id="expenseDescription"
-                    required
-                    value="${escapeAttribute(
-                        form.description ||
-                        ""
-                    )}"
-                    placeholder="รายละเอียดรายการ"
-                >
-
-            </div>
-
-            <div class="form-row">
-
-                <div class="form-group">
-
-                    <label class="form-label required">
-                        จำนวนเงิน
-                    </label>
-
-                    <div class="input-prefix">
-
-                        <span class="input-prefix-symbol">
-                            ฿
-                        </span>
-
-                        <input
-                            type="number"
-                            class="form-control currency-input"
-                            id="expenseAmount"
-                            required
-                            min="0"
-                            step="0.01"
-                            value="${escapeAttribute(
-                                form.amount ||
-                                ""
-                            )}"
-                        >
-
-                    </div>
-
-                </div>
-
-                <div class="form-group">
-
-                    <label class="form-label">
-                        วิธีจ่ายเงิน
-                    </label>
-
-                    <select
-                        class="form-control"
-                        id="expensePaymentMethod"
-                    >
-
-                        <option value="">
-                            เลือกวิธีจ่ายเงิน
-                        </option>
-
-                        <option
-                            value="CASH"
-                            ${form.paymentMethod === "CASH" ? "selected" : ""}
-                        >
-                            เงินสด
-                        </option>
-
-                        <option
-                            value="BANK_TRANSFER"
-                            ${form.paymentMethod === "BANK_TRANSFER" ? "selected" : ""}
-                        >
-                            โอนเงิน
-                        </option>
-
-                        <option
-                            value="CARD"
-                            ${form.paymentMethod === "CARD" ? "selected" : ""}
-                        >
-                            บัตร
-                        </option>
-
-                        <option
-                            value="OTHER"
-                            ${form.paymentMethod === "OTHER" ? "selected" : ""}
-                        >
-                            อื่น ๆ
-                        </option>
-
-                    </select>
-
-                </div>
-
-            </div>
-
-            <div class="form-group">
-
-                <label class="form-label">
-                    เลขอ้างอิง
-                </label>
-
-                <input
-                    type="text"
-                    class="form-control"
-                    id="expenseReference"
-                    value="${escapeAttribute(
-                        form.reference ||
-                        ""
-                    )}"
-                    placeholder="เลขอ้างอิง / หมายเหตุ"
-                >
-
-            </div>
-
-        </form>
-    `;
-
-    const footer = `
-        <button
-            type="button"
-            class="btn btn-outline-secondary"
-            data-action="close-modal"
-        >
-            ยกเลิก
-        </button>
-
-        <button
-            type="button"
-            class="btn btn-danger"
-            data-action="save-expense"
-        >
-            ${isEdit ? "บันทึกการแก้ไข" : "บันทึกรายจ่าย"}
-        </button>
-    `;
-
-    openModal({
-        title:
-            isEdit
-                ? "แก้ไขรายจ่าย"
-                : "บันทึกรายจ่าย",
-        content: content,
-        footer: footer,
-        size: "modal-md"
-    });
-}
-
-async function saveExpenseFromModal() {
-    const form =
-        byId("expenseForm");
-
-    if (!form) {
-        return;
-    }
-
-    if (!form.checkValidity()) {
-        form.reportValidity();
-        return;
-    }
-
-    const data = {
-        id:
-            valueOf("expenseId"),
-        date:
-            valueOf("expenseDate"),
-        docNo:
-            valueOf("expenseDocNo"),
-        accountId:
-            valueOf("expenseAccountId"),
-        categoryId:
-            valueOf("expenseCategoryId"),
-        counterpartyType:
-            valueOf("expenseCounterpartyType"),
-        counterpartyId:
-            valueOf("expenseCounterpartyId"),
-        counterpartyName:
-            getSelectedText(
-                "expenseCounterpartyId"
-            ),
-        description:
-            valueOf("expenseDescription"),
-        amount:
-            toNumber(
-                valueOf("expenseAmount")
-            ),
-        paymentMethod:
-            valueOf("expensePaymentMethod"),
-        reference:
-            valueOf("expenseReference"),
-        status: "ACTIVE"
-    };
-
-    if (data.amount <= 0) {
-        showToast(
-            "ข้อมูลไม่ถูกต้อง",
-            "จำนวนเงินต้องมากกว่า 0",
-            "warning"
-        );
-        return;
-    }
-
-    showLoading(
-        "กำลังบันทึกรายจ่าย..."
-    );
-
-    try {
-        await apiRequest(
-            "saveexpense",
-            {
-                data: data
-            }
-        );
-
-        closeModal();
-
-        showToast(
-            "บันทึกสำเร็จ",
-            "บันทึกรายจ่ายเรียบร้อยแล้ว",
-            "success"
-        );
-
-        await navigateTo(
-            "expenses"
-        );
-    } catch (error) {
-        handleApiError(error);
-    } finally {
-        hideLoading();
-    }
-}
-
-/* =========================================================
-   33. TRANSFER MODAL
-   ========================================================= */
-
-function openTransferModal(id) {
-    let item = null;
-
-    if (id) {
-        item = getItemById(
-            AppState.transfers,
-            id
-        );
-    }
-
-    const isEdit =
-        Boolean(item);
-
-    const form =
-        item
-            ? Object.assign(
-                {},
-                AppState.transferForm,
-                item
-            )
-            : Object.assign(
-                {},
-                AppState.transferForm,
-                {
-                    date: getTodayString()
-                }
-            );
-
-    const content = `
-        <form id="transferForm">
-
-            <input
-                type="hidden"
-                id="transferId"
-                value="${escapeAttribute(
-                    form.id ||
-                    ""
-                )}"
-            >
-
-            <div class="form-row">
-
-                <div class="form-group">
-
-                    <label class="form-label required">
-                        วันที่
-                    </label>
-
-                    <input
-                        type="date"
-                        class="form-control"
-                        id="transferDate"
-                        required
-                        value="${escapeAttribute(
-                            formatDateInput(
-                                form.date
-                            )
-                        )}"
-                    >
-
-                </div>
-
-                <div class="form-group">
-
-                    <label class="form-label">
-                        เลขที่เอกสาร
-                    </label>
-
-                    <input
-                        type="text"
-                        class="form-control"
-                        id="transferDocNo"
-                        value="${escapeAttribute(
-                            form.docNo ||
-                            ""
-                        )}"
-                        placeholder="เว้นว่างเพื่อให้ระบบกำหนด"
-                    >
-
-                </div>
-
-            </div>
-
-            <div class="form-row">
-
-                <div class="form-group">
-
-                    <label class="form-label required">
-                        จากบัญชี
-                    </label>
-
-                    <select
-                        class="form-control"
-                        id="transferFromAccountId"
-                        required
-                    >
-
-                        <option value="">
-                            เลือกบัญชีต้นทาง
-                        </option>
-
-                        ${renderAccountOptions(
-                            form.fromAccountId ||
-                            ""
-                        )}
-
-                    </select>
-
-                </div>
-
-                <div class="form-group">
-
-                    <label class="form-label required">
-                        ไปบัญชี
-                    </label>
-
-                    <select
-                        class="form-control"
-                        id="transferToAccountId"
-                        required
-                    >
-
-                        <option value="">
-                            เลือกบัญชีปลายทาง
-                        </option>
-
-                        ${renderAccountOptions(
-                            form.toAccountId ||
-                            ""
-                        )}
-
-                    </select>
-
-                </div>
-
-            </div>
-
-            <div class="form-group">
-
-                <label class="form-label required">
-                    จำนวนเงิน
-                </label>
-
-                <div class="input-prefix">
-
-                    <span class="input-prefix-symbol">
-                        ฿
-                    </span>
-
-                    <input
-                        type="number"
-                        class="form-control currency-input"
-                        id="transferAmount"
-                        required
-                        min="0"
-                        step="0.01"
-                        value="${escapeAttribute(
-                            form.amount ||
-                            ""
-                        )}"
-                    >
-
-                </div>
-
-            </div>
-
-            <div class="form-group">
-
-                <label class="form-label required">
-                    รายละเอียด
-                </label>
-
-                <input
-                    type="text"
-                    class="form-control"
-                    id="transferDescription"
-                    required
-                    value="${escapeAttribute(
-                        form.description ||
-                        ""
-                    )}"
-                    placeholder="รายละเอียดการโอน"
-                >
-
-            </div>
-
-            <div class="form-group">
-
-                <label class="form-label">
-                    เลขอ้างอิง
-                </label>
-
-                <input
-                    type="text"
-                    class="form-control"
-                    id="transferReference"
-                    value="${escapeAttribute(
-                        form.reference ||
-                        ""
-                    )}"
-                    placeholder="เลขอ้างอิง"
-                >
-
-            </div>
-
-        </form>
-    `;
-
-    const footer = `
-        <button
-            type="button"
-            class="btn btn-outline-secondary"
-            data-action="close-modal"
-        >
-            ยกเลิก
-        </button>
-
-        <button
-            type="button"
-            class="btn btn-primary"
-            data-action="save-transfer"
-        >
-            ${isEdit ? "บันทึกการแก้ไข" : "บันทึกการโอน"}
-        </button>
-    `;
-
-    openModal({
-        title:
-            isEdit
-                ? "แก้ไขรายการโอน"
-                : "โอนเงินระหว่างบัญชี",
-        content: content,
-        footer: footer,
-        size: "modal-md"
-    });
-}
-
-async function saveTransferFromModal() {
-    const form =
-        byId("transferForm");
-
-    if (!form) {
-        return;
-    }
-
-    if (!form.checkValidity()) {
-        form.reportValidity();
-        return;
-    }
-
-    const fromAccountId =
-        valueOf(
-            "transferFromAccountId"
-        );
-
-    const toAccountId =
-        valueOf(
-            "transferToAccountId"
-        );
-
-    if (
-        fromAccountId &&
-        toAccountId &&
-        fromAccountId === toAccountId
-    ) {
-        showToast(
-            "ข้อมูลไม่ถูกต้อง",
-            "บัญชีต้นทางและปลายทางต้องไม่เป็นบัญชีเดียวกัน",
-            "warning"
-        );
-
-        return;
-    }
-
-    const data = {
-        id:
-            valueOf("transferId"),
-        date:
-            valueOf("transferDate"),
-        docNo:
-            valueOf("transferDocNo"),
-        fromAccountId:
-            fromAccountId,
-        toAccountId:
-            toAccountId,
-        amount:
-            toNumber(
-                valueOf("transferAmount")
-            ),
-        description:
-            valueOf(
-                "transferDescription"
-            ),
-        reference:
-            valueOf(
-                "transferReference"
-            ),
-        status: "ACTIVE"
-    };
-
-    if (data.amount <= 0) {
-        showToast(
-            "ข้อมูลไม่ถูกต้อง",
-            "จำนวนเงินต้องมากกว่า 0",
-            "warning"
-        );
-        return;
-    }
-
-    showLoading(
-        "กำลังบันทึกการโอน..."
-    );
-
-    try {
-        await apiRequest(
-            "savetransfer",
-            {
-                data: data
-            }
-        );
-
-        closeModal();
-
-        showToast(
-            "บันทึกสำเร็จ",
-            "บันทึกการโอนเงินเรียบร้อยแล้ว",
-            "success"
-        );
-
-        await navigateTo(
-            "transfers"
-        );
-    } catch (error) {
-        handleApiError(error);
-    } finally {
-        hideLoading();
-    }
-}
-
-/* =========================================================
-   34. ACCOUNT MODAL
-   ========================================================= */
-
-function openAccountModal(id) {
-    const item =
-        id
-            ? getItemById(
-                AppState.accounts,
-                id
-            )
-            : null;
-
-    const isEdit =
-        Boolean(item);
-
-    const content = `
-        <form id="accountForm">
-
-            <input
-                type="hidden"
-                id="accountId"
-                value="${escapeAttribute(
-                    item &&
-                    item.id
-                        ? item.id
-                        : ""
-                )}"
-            >
-
-            <div class="form-row">
-
-                <div class="form-group">
-
-                    <label class="form-label required">
-                        รหัสบัญชี
-                    </label>
-
-                    <input
-                        type="text"
-                        class="form-control"
-                        id="accountCode"
-                        required
-                        value="${escapeAttribute(
-                            item &&
-                            item.code
-                                ? item.code
-                                : ""
-                        )}"
-                    >
-
-                </div>
-
-                <div class="form-group">
-
-                    <label class="form-label required">
-                        ประเภทบัญชี
-                    </label>
-
-                    <select
-                        class="form-control"
-                        id="accountType"
-                        required
-                    >
-
-                        <option value="">
-                            เลือกประเภท
-                        </option>
-
-                        <option
-                            value="CASH"
-                            ${item && item.type === "CASH" ? "selected" : ""}
-                        >
-                            เงินสด
-                        </option>
-
-                        <option
-                            value="BANK"
-                            ${item && item.type === "BANK" ? "selected" : ""}
-                        >
-                            ธนาคาร
-                        </option>
-
-                        <option
-                            value="WALLET"
-                            ${item && item.type === "WALLET" ? "selected" : ""}
-                        >
-                            กระเป๋าเงิน
-                        </option>
-
-                        <option
-                            value="OTHER"
-                            ${item && item.type === "OTHER" ? "selected" : ""}
-                        >
-                            อื่น ๆ
-                        </option>
-
-                    </select>
-
-                </div>
-
-            </div>
-
-            <div class="form-group">
-
-                <label class="form-label required">
-                    ชื่อบัญชี
-                </label>
-
-                <input
-                    type="text"
-                    class="form-control"
-                    id="accountName"
-                    required
-                    value="${escapeAttribute(
-                        item &&
-                        item.name
-                            ? item.name
-                            : ""
-                    )}"
-                >
-
-            </div>
-
-            <div class="form-group">
-
-                <label class="form-label">
-                    ยอดยกมา
-                </label>
-
-                <input
-                    type="number"
-                    class="form-control currency-input"
-                    id="accountOpeningBalance"
-                    step="0.01"
-                    value="${escapeAttribute(
-                        item &&
-                        item.openingBalance
-                            ? item.openingBalance
-                            : "0"
-                    )}"
-                >
-
-            </div>
-
-            <div class="form-group">
-
-                <label class="form-label">
-                    รายละเอียด
-                </label>
-
-                <textarea
-                    class="form-control"
-                    id="accountDescription"
-                >${escapeHTML(
-                    item &&
-                    item.description
-                        ? item.description
-                        : ""
-                )}</textarea>
-
-            </div>
-
-            <div class="form-check">
-
-                <input
-                    type="checkbox"
-                    id="accountActive"
-                    ${!item || item.active !== false ? "checked" : ""}
-                >
-
-                <label
-                    class="form-check-label"
-                    for="accountActive"
-                >
-                    เปิดใช้งานบัญชี
-                </label>
-
-            </div>
-
-        </form>
-    `;
-
-    const footer = `
-        <button
-            type="button"
-            class="btn btn-outline-secondary"
-            data-action="close-modal"
-        >
-            ยกเลิก
-        </button>
-
-        <button
-            type="button"
-            class="btn btn-primary"
-            data-action="save-account"
-        >
-            ${isEdit ? "บันทึกการแก้ไข" : "เพิ่มบัญชี"}
-        </button>
-    `;
-
-    openModal({
-        title:
-            isEdit
-                ? "แก้ไขบัญชี"
-                : "เพิ่มบัญชี",
-        content: content,
-        footer: footer
-    });
-}
-
-async function saveAccountFromModal() {
-    const form =
-        byId("accountForm");
-
-    if (!form) {
-        return;
-    }
-
-    if (!form.checkValidity()) {
-        form.reportValidity();
-        return;
-    }
-
-    const data = {
-        id:
-            valueOf("accountId"),
-        code:
-            valueOf("accountCode"),
-        name:
-            valueOf("accountName"),
-        type:
-            valueOf("accountType"),
-        openingBalance:
-            toNumber(
-                valueOf(
-                    "accountOpeningBalance"
-                )
-            ),
-        description:
-            valueOf(
-                "accountDescription"
-            ),
-        active:
-            Boolean(
-                byId(
-                    "accountActive"
-                ) &&
-                byId(
-                    "accountActive"
-                ).checked
-            )
-    };
-
-    showLoading(
-        "กำลังบันทึกบัญชี..."
-    );
-
-    try {
-        const action =
-            data.id
-                ? "update"
-                : "create";
-
-        await apiRequest(
-            action,
-            {
-                entity: "Accounts",
-                id: data.id,
-                data: data
-            }
-        );
-
-        closeModal();
-
-        showToast(
-            "บันทึกสำเร็จ",
-            "บันทึกข้อมูลบัญชีเรียบร้อยแล้ว",
-            "success"
-        );
-
-        await navigateTo(
-            "accounts"
-        );
-    } catch (error) {
-        handleApiError(error);
-    } finally {
-        hideLoading();
-    }
-}
-
-/* =========================================================
-   35. CUSTOMER MODAL
-   ========================================================= */
-
-function openCustomerModal(id) {
-    const item =
-        id
-            ? getItemById(
-                AppState.customers,
-                id
-            )
-            : null;
-
-    const isEdit =
-        Boolean(item);
-
-    const content =
-        renderPartyForm(
-            item,
-            "customer"
-        );
-
-    const footer = `
-        <button
-            type="button"
-            class="btn btn-outline-secondary"
-            data-action="close-modal"
-        >
-            ยกเลิก
-        </button>
-
-        <button
-            type="button"
-            class="btn btn-primary"
-            data-action="save-customer"
-        >
-            ${isEdit ? "บันทึกการแก้ไข" : "เพิ่มลูกค้า"}
-        </button>
-    `;
-
-    openModal({
-        title:
-            isEdit
-                ? "แก้ไขข้อมูลลูกค้า"
-                : "เพิ่มลูกค้า",
-        content: content,
-        footer: footer,
-        size: "modal-lg"
-    });
-}
-
-function openVendorModal(id) {
-    const item =
-        id
-            ? getItemById(
-                AppState.vendors,
-                id
-            )
-            : null;
-
-    const isEdit =
-        Boolean(item);
-
-    const content =
-        renderPartyForm(
-            item,
-            "vendor"
-        );
-
-    const footer = `
-        <button
-            type="button"
-            class="btn btn-outline-secondary"
-            data-action="close-modal"
-        >
-            ยกเลิก
-        </button>
-
-        <button
-            type="button"
-            class="btn btn-primary"
-            data-action="save-vendor"
-        >
-            ${isEdit ? "บันทึกการแก้ไข" : "เพิ่มผู้จำหน่าย"}
-        </button>
-    `;
-
-    openModal({
-        title:
-            isEdit
-                ? "แก้ไขข้อมูลผู้จำหน่าย"
-                : "เพิ่มผู้จำหน่าย",
-        content: content,
-        footer: footer,
-        size: "modal-lg"
-    });
-}
-
-function renderPartyForm(item, type) {
-    const prefix =
-        type === "customer"
-            ? "customer"
-            : "vendor";
-
-    return `
-        <form id="${prefix}Form">
-
-            <input
-                type="hidden"
-                id="${prefix}Id"
-                value="${escapeAttribute(
-                    item &&
-                    item.id
-                        ? item.id
-                        : ""
-                )}"
-            >
-
-            <div class="form-row">
-
-                <div class="form-group">
-
-                    <label class="form-label required">
-                        รหัส
-                    </label>
-
-                    <input
-                        type="text"
-                        class="form-control"
-                        id="${prefix}Code"
-                        required
-                        value="${escapeAttribute(
-                            item &&
-                            item.code
-                                ? item.code
-                                : ""
-                        )}"
-                    >
-
-                </div>
-
-                <div class="form-group">
-
-                    <label class="form-label required">
-                        ชื่อ
-                    </label>
-
-                    <input
-                        type="text"
-                        class="form-control"
-                        id="${prefix}Name"
-                        required
-                        value="${escapeAttribute(
-                            item &&
-                            item.name
-                                ? item.name
-                                : ""
-                        )}"
-                    >
-
-                </div>
-
-            </div>
-
-            <div class="form-row">
-
-                <div class="form-group">
-
-                    <label class="form-label">
-                        เลขประจำตัวผู้เสียภาษี
-                    </label>
-
-                    <input
-                        type="text"
-                        class="form-control"
-                        id="${prefix}TaxId"
-                        value="${escapeAttribute(
-                            item &&
-                            item.taxId
-                                ? item.taxId
-                                : ""
-                        )}"
-                    >
-
-                </div>
-
-                <div class="form-group">
-
-                    <label class="form-label">
-                        ผู้ติดต่อ
-                    </label>
-
-                    <input
-                        type="text"
-                        class="form-control"
-                        id="${prefix}ContactPerson"
-                        value="${escapeAttribute(
-                            item &&
-                            item.contactPerson
-                                ? item.contactPerson
-                                : ""
-                        )}"
-                    >
-
-                </div>
-
-            </div>
-
-            <div class="form-group">
-
-                <label class="form-label">
-                    ที่อยู่
-                </label>
-
-                <textarea
-                    class="form-control"
-                    id="${prefix}Address"
-                >${escapeHTML(
-                    item &&
-                    item.address
-                        ? item.address
-                        : ""
-                )}</textarea>
-
-            </div>
-
-            <div class="form-row">
-
-                <div class="form-group">
-
-                    <label class="form-label">
-                        โทรศัพท์
-                    </label>
-
-                    <input
-                        type="text"
-                        class="form-control"
-                        id="${prefix}Phone"
-                        value="${escapeAttribute(
-                            item &&
-                            item.phone
-                                ? item.phone
-                                : ""
-                        )}"
-                    >
-
-                </div>
-
-                <div class="form-group">
-
-                    <label class="form-label">
-                        อีเมล
-                    </label>
-
-                    <input
-                        type="email"
-                        class="form-control"
-                        id="${prefix}Email"
-                        value="${escapeAttribute(
-                            item &&
-                            item.email
-                                ? item.email
-                                : ""
-                        )}"
-                    >
-
-                </div>
-
-            </div>
-
-            <div class="form-group">
-
-                <label class="form-label">
-                    หมายเหตุ
-                </label>
-
-                <textarea
-                    class="form-control"
-                    id="${prefix}Notes"
-                >${escapeHTML(
-                    item &&
-                    item.notes
-                        ? item.notes
-                        : ""
-                )}</textarea>
-
-            </div>
-
-            <div class="form-check">
-
-                <input
-                    type="checkbox"
-                    id="${prefix}Active"
-                    ${!item || item.active !== false ? "checked" : ""}
-                >
-
-                <label
-                    class="form-check-label"
-                    for="${prefix}Active"
-                >
-                    เปิดใช้งาน
-                </label>
-
-            </div>
-
-        </form>
-    `;
-}
-
-async function savePartyFromModal(type) {
-    const prefix =
-        type === "customer"
-            ? "customer"
-            : "vendor";
-
-    const entity =
-        type === "customer"
-            ? "Customers"
-            : "Vendors";
-
-    const form =
-        byId(prefix + "Form");
-
-    if (!form) {
-        return;
-    }
-
-    if (!form.checkValidity()) {
-        form.reportValidity();
-        return;
-    }
-
-    const data = {
-        id:
-            valueOf(
-                prefix + "Id"
-            ),
-        code:
-            valueOf(
-                prefix + "Code"
-            ),
-        name:
-            valueOf(
-                prefix + "Name"
-            ),
-        taxId:
-            valueOf(
-                prefix + "TaxId"
-            ),
-        address:
-            valueOf(
-                prefix + "Address"
-            ),
-        phone:
-            valueOf(
-                prefix + "Phone"
-            ),
-        email:
-            valueOf(
-                prefix + "Email"
-            ),
-        contactPerson:
-            valueOf(
-                prefix +
-                "ContactPerson"
-            ),
-        notes:
-            valueOf(
-                prefix + "Notes"
-            ),
-        active:
-            Boolean(
-                byId(
-                    prefix + "Active"
-                ) &&
-                byId(
-                    prefix + "Active"
-                ).checked
-            )
-    };
-
-    showLoading(
-        "กำลังบันทึกข้อมูล..."
-    );
-
-    try {
-        await apiRequest(
-            data.id
-                ? "update"
-                : "create",
-            {
-                entity: entity,
-                id: data.id,
-                data: data
-            }
-        );
-
-        closeModal();
-
-        showToast(
-            "บันทึกสำเร็จ",
-            "บันทึกข้อมูลเรียบร้อยแล้ว",
-            "success"
-        );
-
-        await navigateTo(
-            type === "customer"
-                ? "customers"
-                : "vendors"
-        );
-    } catch (error) {
-        handleApiError(error);
-    } finally {
-        hideLoading();
-    }
-}
-
-/* =========================================================
-   36. USER MODAL
-   ========================================================= */
-
-function openUserModal(id) {
-    if (!isAdmin()) {
-        showToast(
-            "ไม่มีสิทธิ์",
-            "เฉพาะผู้ดูแลระบบเท่านั้น",
-            "warning"
-        );
-
-        return;
-    }
-
-    const item =
-        id
-            ? getItemById(
-                AppState.users,
-                id
-            )
-            : null;
-
-    const isEdit =
-        Boolean(item);
-
-    const content = `
-        <form id="userForm">
-
-            <input
-                type="hidden"
-                id="userId"
-                value="${escapeAttribute(
-                    item &&
-                    item.id
-                        ? item.id
-                        : ""
-                )}"
-            >
-
-            <div class="form-row">
-
-                <div class="form-group">
-
-                    <label class="form-label required">
-                        ชื่อผู้ใช้งาน
-                    </label>
-
-                    <input
-                        type="text"
-                        class="form-control"
-                        id="userUsername"
-                        required
-                        ${item && item.username === "sxaiq54" ? "readonly" : ""}
-                        value="${escapeAttribute(
-                            item &&
-                            item.username
-                                ? item.username
-                                : ""
-                        )}"
-                    >
-
-                </div>
-
-                <div class="form-group">
-
-                    <label class="form-label required">
-                        ชื่อ-นามสกุล
-                    </label>
-
-                    <input
-                        type="text"
-                        class="form-control"
-                        id="userFullName"
-                        required
-                        value="${escapeAttribute(
-                            item &&
-                            item.fullName
-                                ? item.fullName
-                                : ""
-                        )}"
-                    >
-
-                </div>
-
-            </div>
-
-            <div class="form-row">
-
-                <div class="form-group">
-
-                    <label class="form-label ${isEdit ? "" : "required"}">
-                        รหัสผ่าน
-                    </label>
-
-                    <input
-                        type="password"
-                        class="form-control"
-                        id="userPassword"
-                        ${isEdit ? "" : "required"}
-                        autocomplete="new-password"
-                        placeholder="${isEdit ? "เว้นว่างหากไม่ต้องการเปลี่ยน" : "กำหนดรหัสผ่าน"}"
-                    >
-
-                </div>
-
-                <div class="form-group">
-
-                    <label class="form-label required">
-                        สิทธิ์
-                    </label>
-
-                    <select
-                        class="form-control"
-                        id="userRole"
-                        required
-                        ${item && item.username === "sxaiq54" ? "disabled" : ""}
-                    >
-
-                        <option
-                            value="admin"
-                            ${item && item.role === "admin" ? "selected" : ""}
-                        >
-                            ผู้ดูแลระบบ
-                        </option>
-
-                        <option
-                            value="manager"
-                            ${item && item.role === "manager" ? "selected" : ""}
-                        >
-                            ผู้จัดการ
-                        </option>
-
-                        <option
-                            value="staff"
-                            ${!item || item.role === "staff" ? "selected" : ""}
-                        >
-                            เจ้าหน้าที่
-                        </option>
-
-                        <option
-                            value="user"
-                            ${item && item.role === "user" ? "selected" : ""}
-                        >
-                            ผู้ใช้งาน
-                        </option>
-
-                    </select>
-
-                </div>
-
-            </div>
-
-            <div class="form-check">
-
-                <input
-                    type="checkbox"
-                    id="userActive"
-                    ${!item || item.active !== false ? "checked" : ""}
-                    ${item && item.username === "sxaiq54" ? "disabled" : ""}
-                >
-
-                <label
-                    class="form-check-label"
-                    for="userActive"
-                >
-                    เปิดใช้งานผู้ใช้งาน
-                </label>
-
-            </div>
-
-        </form>
-    `;
-
-    const footer = `
-        <button
-            type="button"
-            class="btn btn-outline-secondary"
-            data-action="close-modal"
-        >
-            ยกเลิก
-        </button>
-
-        <button
-            type="button"
-            class="btn btn-primary"
-            data-action="save-user"
-        >
-            ${isEdit ? "บันทึกการแก้ไข" : "เพิ่มผู้ใช้งาน"}
-        </button>
-    `;
-
-    openModal({
-        title:
-            isEdit
-                ? "แก้ไขผู้ใช้งาน"
-                : "เพิ่มผู้ใช้งาน",
-        content: content,
-        footer: footer
-    });
-}
-
-async function saveUserFromModal() {
-    const form =
-        byId("userForm");
-
-    if (!form) {
-        return;
-    }
-
-    if (!form.checkValidity()) {
-        form.reportValidity();
-        return;
-    }
-
-    const id =
-        valueOf("userId");
-
-    const password =
-        valueOf("userPassword");
-
-    if (!id && !password) {
-        showToast(
-            "ข้อมูลไม่ครบ",
-            "กรุณากำหนดรหัสผ่าน",
-            "warning"
-        );
-
-        return;
-    }
-
-    const data = {
-        id: id,
-        username:
-            valueOf("userUsername"),
-        fullName:
-            valueOf("userFullName"),
-        role:
-            valueOf("userRole"),
-        active:
-            Boolean(
-                byId("userActive") &&
-                byId("userActive").checked
-            )
-    };
-
-    if (password) {
-        data.password =
-            password;
-    }
-
-    showLoading(
-        "กำลังบันทึกผู้ใช้งาน..."
-    );
-
-    try {
-        await apiRequest(
-            id
-                ? "update"
-                : "create",
-            {
-                entity: "Users",
-                id: id,
-                data: data
-            }
-        );
-
-        closeModal();
-
-        showToast(
-            "บันทึกสำเร็จ",
-            "บันทึกข้อมูลผู้ใช้งานเรียบร้อยแล้ว",
-            "success"
-        );
-
-        await navigateTo(
-            "users"
-        );
-    } catch (error) {
-        handleApiError(error);
-    } finally {
-        hideLoading();
-    }
-}
-
-/* =========================================================
-   37. DOCUMENT MODAL
-   ========================================================= */
-
-async function openDocumentModal(id) {
-    let item = null;
-
-    if (id) {
-        item = getItemById(
-            AppState.documents,
-            id
-        );
-    }
-
-    if (id && !item) {
-        showLoading(
-            "กำลังโหลดเอกสาร..."
-        );
+            return false;
+        }
 
         try {
-            const result =
+            setLoading(
+                true,
+                'กำลังตรวจสอบข้อมูลเข้าสู่ระบบ...'
+            );
+
+            await login(
+                username,
+                password
+            );
+
+            if (passwordElement) {
+                passwordElement.value = '';
+            }
+
+            showToast(
+                'เข้าสู่ระบบสำเร็จ',
+                'success'
+            );
+        } catch (error) {
+            console.error(
+                'LOGIN ERROR:',
+                error
+            );
+
+            clearSession();
+
+            showLogin();
+
+            showToast(
+                error && error.message
+                    ? error.message
+                    : 'ไม่สามารถเข้าสู่ระบบได้',
+                'error',
+                6000
+            );
+        } finally {
+            setLoading(false);
+        }
+
+        return false;
+    }
+
+    async function logout() {
+        try {
+            if (state.token) {
                 await apiRequest(
-                    "getDocumentWithItems",
+                    'logout',
+                    {}
+                );
+            }
+        } catch (error) {
+            console.warn(
+                'Logout server error:',
+                error
+            );
+        } finally {
+            clearSession();
+            showToast(
+                'ออกจากระบบแล้ว',
+                'success'
+            );
+        }
+    }
+
+    async function restoreSession() {
+        if (!loadStoredSession()) {
+            showLogin();
+            return false;
+        }
+
+        try {
+            setLoading(
+                true,
+                'กำลังตรวจสอบ Session...'
+            );
+
+            const response =
+                await apiRequest(
+                    'me',
+                    {}
+                );
+
+            const data =
+                unwrapResponse(response);
+
+            if (
+                data &&
+                (
+                    data.user ||
+                    data.account
+                )
+            ) {
+                state.user =
+                    data.user ||
+                    data.account;
+
+                setStorage(
+                    CONFIG.USER_KEY,
+                    JSON.stringify(
+                        state.user
+                    )
+                );
+            }
+
+            await loadBootstrap();
+
+            showApp();
+
+            navigate(
+                state.currentPage ||
+                'dashboard'
+            );
+
+            return true;
+        } catch (error) {
+            console.warn(
+                'Restore session failed:',
+                error
+            );
+
+            clearSession();
+
+            return false;
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    async function loadBootstrap() {
+        const response =
+            await apiRequest(
+                'bootstrap',
+                {}
+            );
+
+        const data =
+            unwrapResponse(response) ||
+            {};
+
+        state.settings =
+            normalizeArrayOrObject(
+                data.settings
+            );
+
+        state.accounts =
+            normalizeArray(
+                data.accounts
+            );
+
+        state.categories =
+            normalizeArray(
+                data.categories
+            );
+
+        state.customers =
+            normalizeArray(
+                data.customers
+            );
+
+        state.vendors =
+            normalizeArray(
+                data.vendors ||
+                data.suppliers
+            );
+
+        state.users =
+            normalizeArray(
+                data.users
+            );
+
+        state.documentTypes =
+            normalizeArray(
+                data.documentTypes
+            );
+
+        if (!state.documentTypes.length) {
+            state.documentTypes =
+                DOCUMENT_TYPES.slice();
+        }
+
+        if (data.user) {
+            state.user = data.user;
+
+            setStorage(
+                CONFIG.USER_KEY,
+                JSON.stringify(
+                    data.user
+                )
+            );
+        }
+
+        renderUserInfo();
+        applyPermissions();
+
+        return data;
+    }
+
+    function normalizeArray(value) {
+        if (Array.isArray(value)) {
+            return value;
+        }
+
+        if (!value) {
+            return [];
+        }
+
+        if (Array.isArray(value.rows)) {
+            return value.rows;
+        }
+
+        if (Array.isArray(value.items)) {
+            return value.items;
+        }
+
+        if (Array.isArray(value.records)) {
+            return value.records;
+        }
+
+        if (typeof value === 'object') {
+            return Object.keys(value).map(
+                function (key) {
+                    const item = value[key];
+
+                    if (
+                        item &&
+                        typeof item === 'object'
+                    ) {
+                        if (!item.id) {
+                            item.id = key;
+                        }
+                    }
+
+                    return item;
+                }
+            );
+        }
+
+        return [];
+    }
+
+    function normalizeArrayOrObject(value) {
+        if (!value) {
+            return {};
+        }
+
+        if (
+            typeof value === 'object' &&
+            !Array.isArray(value)
+        ) {
+            return value;
+        }
+
+        const array =
+            normalizeArray(value);
+
+        const object = {};
+
+        array.forEach(
+            function (item) {
+                if (!item) {
+                    return;
+                }
+
+                const key =
+                    item.key ||
+                    item.name ||
+                    item.id;
+
+                if (key) {
+                    object[key] =
+                        item.value !== undefined
+                            ? item.value
+                            : item;
+                }
+            }
+        );
+
+        return object;
+    }
+
+    function getSetting(key, fallback) {
+        if (
+            state.settings &&
+            Object.prototype.hasOwnProperty.call(
+                state.settings,
+                key
+            )
+        ) {
+            const value =
+                state.settings[key];
+
+            if (
+                value &&
+                typeof value === 'object' &&
+                value.value !== undefined
+            ) {
+                return value.value;
+            }
+
+            return value;
+        }
+
+        return fallback;
+    }
+
+    function isAdmin() {
+        if (!state.user) {
+            return false;
+        }
+
+        const role =
+            String(
+                state.user.role ||
+                state.user.userRole ||
+                ''
+            ).toLowerCase();
+
+        return (
+            role === 'admin' ||
+            role === 'administrator' ||
+            role === 'owner' ||
+            role === 'ผู้ดูแลระบบ'
+        );
+    }
+
+    function hasPermission(permission) {
+        if (isAdmin()) {
+            return true;
+        }
+
+        if (!state.user) {
+            return false;
+        }
+
+        const permissions =
+            state.user.permissions ||
+            state.user.permission ||
+            [];
+
+        if (Array.isArray(permissions)) {
+            return permissions.indexOf(
+                permission
+            ) !== -1;
+        }
+
+        if (
+            permissions &&
+            typeof permissions === 'object'
+        ) {
+            return permissions[permission] === true;
+        }
+
+        return false;
+    }
+
+    function applyPermissions() {
+        const adminOnly =
+            $$('[data-admin-only]');
+
+        adminOnly.forEach(
+            function (element) {
+                if (isAdmin()) {
+                    showElement(element);
+                } else {
+                    hideElement(element);
+                }
+            }
+        );
+
+        const permissionElements =
+            $$('[data-permission]');
+
+        permissionElements.forEach(
+            function (element) {
+                const permission =
+                    element.getAttribute(
+                        'data-permission'
+                    );
+
+                if (
+                    permission &&
+                    hasPermission(permission)
+                ) {
+                    showElement(element);
+                } else {
+                    hideElement(element);
+                }
+            }
+        );
+    }
+
+    function renderUserInfo() {
+        const user =
+            state.user || {};
+
+        const name =
+            user.fullName ||
+            user.name ||
+            user.username ||
+            'ผู้ใช้งาน';
+
+        const role =
+            user.role ||
+            'user';
+
+        const username =
+            user.username ||
+            '';
+
+        const elements = [
+            byId('userDisplayName'),
+            byId('currentUserName'),
+            byId('profileName')
+        ];
+
+        elements.forEach(
+            function (element) {
+                if (element) {
+                    element.textContent =
+                        name;
+                }
+            }
+        );
+
+        const roleElements = [
+            byId('userRole'),
+            byId('currentUserRole'),
+            byId('profileRole')
+        ];
+
+        roleElements.forEach(
+            function (element) {
+                if (element) {
+                    element.textContent =
+                        role;
+                }
+            }
+        );
+
+        const usernameElements = [
+            byId('userUsername'),
+            byId('currentUsername')
+        ];
+
+        usernameElements.forEach(
+            function (element) {
+                if (element) {
+                    element.textContent =
+                        username;
+                }
+            }
+        );
+
+        const avatarElements =
+            $$('[data-user-avatar]');
+
+        avatarElements.forEach(
+            function (element) {
+                const first =
+                    String(name)
+                        .trim()
+                        .charAt(0)
+                        .toUpperCase();
+
+                element.textContent =
+                    first || 'U';
+            }
+        );
+    }
+
+    function showLogin() {
+        const loginScreen =
+            byId('loginScreen') ||
+            byId('loginPage') ||
+            $('.login-screen');
+
+        const appShell =
+            byId('appShell') ||
+            byId('app') ||
+            $('.app-shell');
+
+        if (loginScreen) {
+            showElement(loginScreen);
+        }
+
+        if (appShell) {
+            hideElement(appShell);
+        }
+
+        document.body.classList.add(
+            'login-active'
+        );
+
+        document.body.classList.remove(
+            'app-active'
+        );
+    }
+
+    function hideLogin() {
+        const loginScreen =
+            byId('loginScreen') ||
+            byId('loginPage') ||
+            $('.login-screen');
+
+        if (loginScreen) {
+            hideElement(loginScreen);
+        }
+
+        document.body.classList.remove(
+            'login-active'
+        );
+    }
+
+    function showApp() {
+        const appShell =
+            byId('appShell') ||
+            byId('app') ||
+            $('.app-shell');
+
+        hideLogin();
+
+        if (appShell) {
+            showElement(appShell);
+        }
+
+        document.body.classList.add(
+            'app-active'
+        );
+
+        renderUserInfo();
+        applyPermissions();
+    }
+
+    function hideApp() {
+        const appShell =
+            byId('appShell') ||
+            byId('app') ||
+            $('.app-shell');
+
+        if (appShell) {
+            hideElement(appShell);
+        }
+
+        document.body.classList.remove(
+            'app-active'
+        );
+    }
+
+    function setPageTitle(page) {
+        const config =
+            PAGE_CONFIG[page] ||
+            {
+                title: page,
+                subtitle: ''
+            };
+
+        const titleElements = [
+            byId('pageTitle'),
+            byId('contentTitle'),
+            byId('currentPageTitle')
+        ];
+
+        titleElements.forEach(
+            function (element) {
+                if (element) {
+                    element.textContent =
+                        config.title;
+                }
+            }
+        );
+
+        const subtitleElements = [
+            byId('pageSubtitle'),
+            byId('contentSubtitle'),
+            byId('currentPageSubtitle')
+        ];
+
+        subtitleElements.forEach(
+            function (element) {
+                if (element) {
+                    element.textContent =
+                        config.subtitle;
+                }
+            }
+        );
+
+        document.title =
+            config.title +
+            ' | ' +
+            CONFIG.APP_NAME;
+    }
+
+    function setActiveNavigation(page) {
+        const navigation =
+            $$('[data-page]');
+
+        navigation.forEach(
+            function (element) {
+                const target =
+                    element.getAttribute(
+                        'data-page'
+                    );
+
+                element.classList.toggle(
+                    'active',
+                    target === page
+                );
+
+                element.setAttribute(
+                    'aria-current',
+                    target === page
+                        ? 'page'
+                        : 'false'
+                );
+            }
+        );
+    }
+
+    function showPageSection(page) {
+        const sections =
+            $$('[data-page-section]');
+
+        if (sections.length) {
+            sections.forEach(
+                function (section) {
+                    const target =
+                        section.getAttribute(
+                            'data-page-section'
+                        );
+
+                    section.classList.toggle(
+                        'active',
+                        target === page
+                    );
+
+                    if (target === page) {
+                        showElement(section);
+                    } else {
+                        hideElement(section);
+                    }
+                }
+            );
+
+            return;
+        }
+
+        const pages = Object.keys(
+            PAGE_CONFIG
+        );
+
+        pages.forEach(
+            function (pageName) {
+                const section =
+                    byId(
+                        'page-' +
+                        pageName
+                    );
+
+                if (!section) {
+                    return;
+                }
+
+                if (pageName === page) {
+                    showElement(section);
+                    section.classList.add(
+                        'active'
+                    );
+                } else {
+                    hideElement(section);
+                    section.classList.remove(
+                        'active'
+                    );
+                }
+            }
+        );
+    }
+
+    async function navigate(page) {
+        if (!page) {
+            return;
+        }
+
+        const allowedPages = Object.keys(
+            PAGE_CONFIG
+        );
+
+        if (
+            allowedPages.indexOf(page) === -1
+        ) {
+            page = 'dashboard';
+        }
+
+        if (
+            (
+                page === 'users' ||
+                page === 'settings' ||
+                page === 'auditlogs'
+            ) &&
+            !isAdmin()
+        ) {
+            showToast(
+                'คุณไม่มีสิทธิ์เข้าถึงหน้านี้',
+                'warning'
+            );
+
+            return;
+        }
+
+        state.currentPage = page;
+
+        setStorage(
+            'elaas_private_finance_current_page',
+            page
+        );
+
+        setPageTitle(page);
+        setActiveNavigation(page);
+        showPageSection(page);
+
+        closeSidebarMobile();
+
+        try {
+            if (page === 'dashboard') {
+                await renderDashboard();
+                return;
+            }
+
+            if (page === 'reports') {
+                await renderReportsPage();
+                return;
+            }
+
+            if (page === 'settings') {
+                await renderSettingsPage();
+                return;
+            }
+
+            if (page === 'auditlogs') {
+                await renderAuditLogsPage();
+                return;
+            }
+
+            await renderEntityPage(page);
+        } catch (error) {
+            console.error(
+                'NAVIGATION ERROR:',
+                error
+            );
+
+            showToast(
+                error.message ||
+                'ไม่สามารถโหลดข้อมูลหน้านี้ได้',
+                'error'
+            );
+        }
+    }
+
+    function openSidebarMobile() {
+        const sidebar =
+            $('.sidebar') ||
+            byId('sidebar');
+
+        if (sidebar) {
+            sidebar.classList.add(
+                'mobile-open'
+            );
+        }
+
+        document.body.classList.add(
+            'sidebar-open'
+        );
+    }
+
+    function closeSidebarMobile() {
+        const sidebar =
+            $('.sidebar') ||
+            byId('sidebar');
+
+        if (sidebar) {
+            sidebar.classList.remove(
+                'mobile-open'
+            );
+        }
+
+        document.body.classList.remove(
+            'sidebar-open'
+        );
+    }
+
+    function toggleSidebar() {
+        const sidebar =
+            $('.sidebar') ||
+            byId('sidebar');
+
+        if (!sidebar) {
+            return;
+        }
+
+        if (
+            window.innerWidth <= 900
+        ) {
+            if (
+                sidebar.classList.contains(
+                    'mobile-open'
+                )
+            ) {
+                closeSidebarMobile();
+            } else {
+                openSidebarMobile();
+            }
+
+            return;
+        }
+
+        sidebar.classList.toggle(
+            'collapsed'
+        );
+
+        document.body.classList.toggle(
+            'sidebar-collapsed'
+        );
+    }
+
+    function getPageContainer(page) {
+        const possibleIds = [
+            'pageContent',
+            'mainContent',
+            'content',
+            'appContent',
+            'viewContainer',
+            'dynamicContent'
+        ];
+
+        for (
+            let index = 0;
+            index < possibleIds.length;
+            index += 1
+        ) {
+            const element =
+                byId(
+                    possibleIds[index]
+                );
+
+            if (element) {
+                return element;
+            }
+        }
+
+        const existingSection =
+            byId(
+                'page-' +
+                page
+            );
+
+        if (existingSection) {
+            return existingSection;
+        }
+
+        let container =
+            byId('generatedPageContent');
+
+        if (!container) {
+            container =
+                document.createElement(
+                    'main'
+                );
+
+            container.id =
+                'generatedPageContent';
+
+            container.className =
+                'generated-page-content';
+
+            document.body.appendChild(
+                container
+            );
+        }
+
+        return container;
+    }
+
+    function renderDashboardCards(data) {
+        const income =
+            parseNumber(
+                data.income ||
+                data.totalIncome ||
+                data.total_income
+            );
+
+        const expense =
+            parseNumber(
+                data.expense ||
+                data.totalExpense ||
+                data.total_expense
+            );
+
+        const transferIn =
+            parseNumber(
+                data.transferIn ||
+                data.totalTransferIn
+            );
+
+        const transferOut =
+            parseNumber(
+                data.transferOut ||
+                data.totalTransferOut
+            );
+
+        const net =
+            data.net !== undefined
+                ? parseNumber(data.net)
+                : income -
+                  expense;
+
+        const balance =
+            data.balance !== undefined
+                ? parseNumber(data.balance)
+                : net +
+                  transferIn -
+                  transferOut;
+
+        setTextByIds(
+            [
+                'dashboardIncome',
+                'totalIncome',
+                'incomeTotal'
+            ],
+            formatMoney(income)
+        );
+
+        setTextByIds(
+            [
+                'dashboardExpense',
+                'totalExpense',
+                'expenseTotal'
+            ],
+            formatMoney(expense)
+        );
+
+        setTextByIds(
+            [
+                'dashboardNet',
+                'netTotal'
+            ],
+            formatMoney(net)
+        );
+
+        setTextByIds(
+            [
+                'dashboardBalance',
+                'balanceTotal',
+                'cashBalance'
+            ],
+            formatMoney(balance)
+        );
+
+        setTextByIds(
+            [
+                'dashboardTransferIn',
+                'transferInTotal'
+            ],
+            formatMoney(transferIn)
+        );
+
+        setTextByIds(
+            [
+                'dashboardTransferOut',
+                'transferOutTotal'
+            ],
+            formatMoney(transferOut)
+        );
+    }
+
+    function setTextByIds(ids, value) {
+        ids.forEach(
+            function (id) {
+                const element =
+                    byId(id);
+
+                if (element) {
+                    element.textContent =
+                        value;
+                }
+            }
+        );
+    }
+
+    async function renderDashboard() {
+        const container =
+            getPageContainer(
+                'dashboard'
+            );
+
+        const today =
+            toInputDate(
+                new Date()
+            );
+
+        const firstDay =
+            new Date();
+
+        firstDay.setDate(1);
+
+        const dateFrom =
+            toInputDate(firstDay);
+
+        const dateTo =
+            today;
+
+        const existingDashboard =
+            byId('page-dashboard');
+
+        if (
+            existingDashboard &&
+            existingDashboard.children.length
+        ) {
+            setLoading(
+                true,
+                'กำลังโหลดแดชบอร์ด...'
+            );
+        } else {
+            container.innerHTML =
+                createDashboardSkeleton();
+        }
+
+        try {
+            const response =
+                await apiRequest(
+                    'dashboard',
+                    {
+                        dateFrom: dateFrom,
+                        dateTo: dateTo
+                    }
+                );
+
+            const data =
+                unwrapResponse(response) ||
+                {};
+
+            state.dashboardData =
+                data;
+
+            renderDashboardCards(data);
+
+            renderDashboardHTML(
+                container,
+                data
+            );
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    function createDashboardSkeleton() {
+        return (
+            '<section class="dashboard-page">' +
+            '<div class="dashboard-toolbar">' +
+            '<div>' +
+            '<h2>ภาพรวมทางการเงิน</h2>' +
+            '<p>ข้อมูลสรุปของกิจการ</p>' +
+            '</div>' +
+            '<div class="dashboard-actions">' +
+            '<button type="button" class="btn btn-primary" data-action="refresh-dashboard">รีเฟรช</button>' +
+            '</div>' +
+            '</div>' +
+            '<div class="dashboard-cards">' +
+            createStatCard(
+                'รายรับ',
+                'dashboardIncome',
+                '0.00'
+            ) +
+            createStatCard(
+                'รายจ่าย',
+                'dashboardExpense',
+                '0.00'
+            ) +
+            createStatCard(
+                'คงเหลือสุทธิ',
+                'dashboardNet',
+                '0.00'
+            ) +
+            createStatCard(
+                'ยอดคงเหลือ',
+                'dashboardBalance',
+                '0.00'
+            ) +
+            '</div>' +
+            '<div class="dashboard-grid">' +
+            '<div class="card">' +
+            '<div class="card-header">' +
+            '<h3>รายการล่าสุด</h3>' +
+            '</div>' +
+            '<div id="dashboardRecentTransactions" class="table-responsive"></div>' +
+            '</div>' +
+            '<div class="card">' +
+            '<div class="card-header">' +
+            '<h3>สรุปตามบัญชี</h3>' +
+            '</div>' +
+            '<div id="dashboardAccountsSummary" class="table-responsive"></div>' +
+            '</div>' +
+            '</div>' +
+            '</section>'
+        );
+    }
+
+    function createStatCard(title, id, value) {
+        return (
+            '<div class="stat-card">' +
+            '<div class="stat-card-title">' +
+            escapeHtml(title) +
+            '</div>' +
+            '<div class="stat-card-value" id="' +
+            escapeHtml(id) +
+            '">' +
+            escapeHtml(value) +
+            '</div>' +
+            '<div class="stat-card-currency">บาท</div>' +
+            '</div>'
+        );
+    }
+
+    function renderDashboardHTML(container, data) {
+        if (!container) {
+            return;
+        }
+
+        if (
+            !byId('dashboardIncome')
+        ) {
+            container.innerHTML =
+                createDashboardSkeleton();
+        }
+
+        renderDashboardCards(data);
+
+        const recent =
+            normalizeArray(
+                data.recentTransactions ||
+                data.transactions ||
+                data.recent
+            );
+
+        const accountSummary =
+            normalizeArray(
+                data.accounts ||
+                data.accountSummary ||
+                data.accountBalances
+            );
+
+        const recentContainer =
+            byId(
+                'dashboardRecentTransactions'
+            );
+
+        if (recentContainer) {
+            recentContainer.innerHTML =
+                renderTransactionMiniTable(
+                    recent
+                );
+        }
+
+        const accountContainer =
+            byId(
+                'dashboardAccountsSummary'
+            );
+
+        if (accountContainer) {
+            accountContainer.innerHTML =
+                renderAccountSummaryTable(
+                    accountSummary
+                );
+        }
+
+        renderDashboardChart(
+            data
+        );
+    }
+
+    function renderTransactionMiniTable(rows) {
+        if (!rows.length) {
+            return (
+                '<div class="empty-state">' +
+                '<div class="empty-icon">○</div>' +
+                '<div>ยังไม่มีรายการล่าสุด</div>' +
+                '</div>'
+            );
+        }
+
+        let html =
+            '<table class="data-table">' +
+            '<thead>' +
+            '<tr>' +
+            '<th>วันที่</th>' +
+            '<th>รายการ</th>' +
+            '<th>ประเภท</th>' +
+            '<th class="text-right">จำนวนเงิน</th>' +
+            '</tr>' +
+            '</thead>' +
+            '<tbody>';
+
+        rows.slice(0, 10).forEach(
+            function (row) {
+                const amount =
+                    parseNumber(
+                        row.amount ||
+                        row.total
+                    );
+
+                const type =
+                    row.type ||
+                    row.transactionType ||
+                    '';
+
+                html +=
+                    '<tr>' +
+                    '<td>' +
+                    escapeHtml(
+                        formatDate(
+                            row.date ||
+                            row.createdAt
+                        )
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.description ||
+                        row.name ||
+                        row.docNo ||
+                        '-'
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(type) +
+                    '</td>' +
+                    '<td class="text-right">' +
+                    escapeHtml(
+                        formatMoney(
+                            amount
+                        )
+                    ) +
+                    '</td>' +
+                    '</tr>';
+            }
+        );
+
+        html +=
+            '</tbody>' +
+            '</table>';
+
+        return html;
+    }
+
+    function renderAccountSummaryTable(rows) {
+        if (!rows.length) {
+            return (
+                '<div class="empty-state">' +
+                '<div>ยังไม่มีข้อมูลบัญชี</div>' +
+                '</div>'
+            );
+        }
+
+        let html =
+            '<table class="data-table">' +
+            '<thead>' +
+            '<tr>' +
+            '<th>รหัส</th>' +
+            '<th>บัญชี</th>' +
+            '<th>ประเภท</th>' +
+            '<th class="text-right">ยอดคงเหลือ</th>' +
+            '</tr>' +
+            '</thead>' +
+            '<tbody>';
+
+        rows.forEach(
+            function (row) {
+                html +=
+                    '<tr>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.code ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.name ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.type ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td class="text-right">' +
+                    escapeHtml(
+                        formatMoney(
+                            row.balance ||
+                            row.currentBalance ||
+                            row.amount
+                        )
+                    ) +
+                    '</td>' +
+                    '</tr>';
+            }
+        );
+
+        html +=
+            '</tbody>' +
+            '</table>';
+
+        return html;
+    }
+
+    function renderDashboardChart(data) {
+        if (
+            !window.Chart
+        ) {
+            return;
+        }
+
+        const canvas =
+            byId(
+                'dashboardChart'
+            );
+
+        if (!canvas) {
+            return;
+        }
+
+        const chartData =
+            data.chart ||
+            data.monthly ||
+            data.monthlySummary ||
+            {};
+
+        const labels =
+            chartData.labels ||
+            [];
+
+        const income =
+            chartData.income ||
+            [];
+
+        const expense =
+            chartData.expense ||
+            [];
+
+        if (
+            state.chartInstances.dashboard
+        ) {
+            state.chartInstances.dashboard.destroy();
+        }
+
+        state.chartInstances.dashboard =
+            new window.Chart(
+                canvas,
+                {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            {
+                                label: 'รายรับ',
+                                data: income
+                            },
+                            {
+                                label: 'รายจ่าย',
+                                data: expense
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'bottom'
+                            }
+                        }
+                    }
+                }
+            );
+    }
+
+    async function renderEntityPage(page) {
+        const config =
+            ENTITY_CONFIG[page];
+
+        if (!config) {
+            return;
+        }
+
+        const container =
+            getPageContainer(page);
+
+        const filterState =
+            state.filters[page] ||
+            {};
+
+        container.innerHTML =
+            createEntityPageHTML(
+                page,
+                config
+            );
+
+        applyEntityFiltersToForm(
+            page,
+            filterState
+        );
+
+        await loadEntityRows(
+            page,
+            1
+        );
+    }
+
+    function createEntityPageHTML(page, config) {
+        let title =
+            config.title;
+
+        let actionButton =
+            '';
+
+        if (
+            page !== 'users' ||
+            isAdmin()
+        ) {
+            actionButton =
+                '<button type="button" class="btn btn-primary" data-action="create" data-entity="' +
+                escapeHtml(page) +
+                '">' +
+                '＋ เพิ่มรายการ' +
+                '</button>';
+        }
+
+        const filterHtml =
+            createEntityFilterHTML(
+                page
+            );
+
+        return (
+            '<section class="entity-page" data-entity-page="' +
+            escapeHtml(page) +
+            '">' +
+            '<div class="page-toolbar">' +
+            '<div>' +
+            '<h2>' +
+            escapeHtml(title) +
+            '</h2>' +
+            '<p>' +
+            escapeHtml(
+                PAGE_CONFIG[page]
+                    ? PAGE_CONFIG[page].subtitle
+                    : ''
+            ) +
+            '</p>' +
+            '</div>' +
+            '<div class="toolbar-actions">' +
+            actionButton +
+            '<button type="button" class="btn btn-secondary" data-action="export-entity" data-entity="' +
+            escapeHtml(page) +
+            '">' +
+            'ส่งออก Excel' +
+            '</button>' +
+            '</div>' +
+            '</div>' +
+            filterHtml +
+            '<div class="card">' +
+            '<div class="card-body no-padding">' +
+            '<div id="entityTableContainer" class="table-responsive">' +
+            '<div class="loading-state">กำลังโหลดข้อมูล...</div>' +
+            '</div>' +
+            '</div>' +
+            '</div>' +
+            '<div id="entityPagination" class="pagination-container"></div>' +
+            '</section>'
+        );
+    }
+
+    function createEntityFilterHTML(page) {
+        if (
+            page === 'income' ||
+            page === 'expense' ||
+            page === 'transfers'
+        ) {
+            return (
+                '<div class="card filter-card">' +
+                '<div class="filter-grid">' +
+                '<div class="form-group">' +
+                '<label>วันที่เริ่มต้น</label>' +
+                '<input type="date" id="filterDateFrom">' +
+                '</div>' +
+                '<div class="form-group">' +
+                '<label>วันที่สิ้นสุด</label>' +
+                '<input type="date" id="filterDateTo">' +
+                '</div>' +
+                '<div class="form-group">' +
+                '<label>ค้นหา</label>' +
+                '<input type="search" id="filterSearch" placeholder="เลขที่เอกสาร / รายการ / ชื่อ">' +
+                '</div>' +
+                '<div class="form-group filter-actions">' +
+                '<button type="button" class="btn btn-primary" data-action="apply-filter" data-entity="' +
+                escapeHtml(page) +
+                '">ค้นหา</button>' +
+                '<button type="button" class="btn btn-secondary" data-action="clear-filter" data-entity="' +
+                escapeHtml(page) +
+                '">ล้าง</button>' +
+                '</div>' +
+                '</div>' +
+                '</div>'
+            );
+        }
+
+        if (
+            page === 'documents'
+        ) {
+            return (
+                '<div class="card filter-card">' +
+                '<div class="filter-grid">' +
+                '<div class="form-group">' +
+                '<label>วันที่เริ่มต้น</label>' +
+                '<input type="date" id="filterDateFrom">' +
+                '</div>' +
+                '<div class="form-group">' +
+                '<label>วันที่สิ้นสุด</label>' +
+                '<input type="date" id="filterDateTo">' +
+                '</div>' +
+                '<div class="form-group">' +
+                '<label>ประเภทเอกสาร</label>' +
+                '<select id="filterDocumentType">' +
+                '<option value="">ทั้งหมด</option>' +
+                createDocumentTypeOptions('') +
+                '</select>' +
+                '</div>' +
+                '<div class="form-group">' +
+                '<label>ค้นหา</label>' +
+                '<input type="search" id="filterSearch" placeholder="เลขที่เอกสาร / ลูกค้า">' +
+                '</div>' +
+                '<div class="form-group filter-actions">' +
+                '<button type="button" class="btn btn-primary" data-action="apply-filter" data-entity="' +
+                escapeHtml(page) +
+                '">ค้นหา</button>' +
+                '<button type="button" class="btn btn-secondary" data-action="clear-filter" data-entity="' +
+                escapeHtml(page) +
+                '">ล้าง</button>' +
+                '</div>' +
+                '</div>' +
+                '</div>'
+            );
+        }
+
+        return (
+            '<div class="card filter-card">' +
+            '<div class="filter-grid">' +
+            '<div class="form-group form-group-wide">' +
+            '<label>ค้นหา</label>' +
+            '<input type="search" id="filterSearch" placeholder="ค้นหา">' +
+            '</div>' +
+            '<div class="form-group filter-actions">' +
+            '<button type="button" class="btn btn-primary" data-action="apply-filter" data-entity="' +
+            escapeHtml(page) +
+            '">ค้นหา</button>' +
+            '<button type="button" class="btn btn-secondary" data-action="clear-filter" data-entity="' +
+            escapeHtml(page) +
+            '">ล้าง</button>' +
+            '</div>' +
+            '</div>' +
+            '</div>'
+        );
+    }
+
+    function createDocumentTypeOptions(selected) {
+        const types =
+            state.documentTypes.length
+                ? state.documentTypes
+                : DOCUMENT_TYPES;
+
+        let html = '';
+
+        types.forEach(
+            function (type) {
+                const code =
+                    type.code ||
+                    type.id ||
+                    '';
+
+                const name =
+                    type.name ||
+                    type.label ||
+                    code;
+
+                html +=
+                    '<option value="' +
+                    escapeHtml(code) +
+                    '"' +
+                    (
+                        code === selected
+                            ? ' selected'
+                            : ''
+                    ) +
+                    '>' +
+                    escapeHtml(name) +
+                    '</option>';
+            }
+        );
+
+        return html;
+    }
+
+    function applyEntityFiltersToForm(page, filters) {
+        const dateFrom =
+            byId('filterDateFrom');
+
+        const dateTo =
+            byId('filterDateTo');
+
+        const search =
+            byId('filterSearch');
+
+        const documentType =
+            byId('filterDocumentType');
+
+        if (dateFrom) {
+            dateFrom.value =
+                filters.dateFrom ||
+                '';
+        }
+
+        if (dateTo) {
+            dateTo.value =
+                filters.dateTo ||
+                '';
+        }
+
+        if (search) {
+            search.value =
+                filters.search ||
+                '';
+        }
+
+        if (documentType) {
+            documentType.value =
+                filters.documentType ||
+                '';
+        }
+    }
+
+    async function loadEntityRows(page, pageNumber) {
+        const config =
+            ENTITY_CONFIG[page];
+
+        if (!config) {
+            return;
+        }
+
+        const tableContainer =
+            byId(
+                'entityTableContainer'
+            );
+
+        if (tableContainer) {
+            tableContainer.innerHTML =
+                '<div class="loading-state">กำลังโหลดข้อมูล...</div>';
+        }
+
+        const filters =
+            state.filters[page] ||
+            {};
+
+        const payload = {
+            entity: page,
+            sheet: config.sheet,
+            page: pageNumber,
+            pageSize: state.pageSize,
+            filters: filters
+        };
+
+        const response =
+            await apiRequest(
+                'list',
+                payload
+            );
+
+        const data =
+            unwrapResponse(response);
+
+        let rows = [];
+        let total = 0;
+
+        if (Array.isArray(data)) {
+            rows = data;
+            total = data.length;
+        } else if (data) {
+            rows =
+                normalizeArray(
+                    data.rows ||
+                    data.items ||
+                    data.records
+                );
+
+            total =
+                parseNumber(
+                    data.total ||
+                    data.totalRows ||
+                    data.count
+                );
+
+            if (!total) {
+                total = rows.length;
+            }
+        }
+
+        state.currentRows = rows;
+        state.currentEntity = page;
+        state.currentPageNumber =
+            pageNumber;
+        state.totalRows = total;
+
+        renderEntityTable(
+            page,
+            rows
+        );
+
+        renderPagination(
+            page,
+            pageNumber,
+            total
+        );
+    }
+
+    function renderEntityTable(page, rows) {
+        const container =
+            byId(
+                'entityTableContainer'
+            );
+
+        if (!container) {
+            return;
+        }
+
+        if (!rows.length) {
+            container.innerHTML =
+                '<div class="empty-state">' +
+                '<div class="empty-icon">○</div>' +
+                '<h3>ยังไม่มีข้อมูล</h3>' +
+                '<p>ยังไม่พบรายการในระบบ</p>' +
+                '</div>';
+
+            return;
+        }
+
+        let html = '';
+
+        if (page === 'income') {
+            html =
+                renderIncomeTable(
+                    rows
+                );
+        } else if (page === 'expense') {
+            html =
+                renderExpenseTable(
+                    rows
+                );
+        } else if (page === 'transfers') {
+            html =
+                renderTransferTable(
+                    rows
+                );
+        } else if (page === 'accounts') {
+            html =
+                renderAccountsTable(
+                    rows
+                );
+        } else if (page === 'categories') {
+            html =
+                renderCategoriesTable(
+                    rows
+                );
+        } else if (page === 'customers') {
+            html =
+                renderCustomersTable(
+                    rows
+                );
+        } else if (page === 'vendors') {
+            html =
+                renderVendorsTable(
+                    rows
+                );
+        } else if (page === 'documents') {
+            html =
+                renderDocumentsTable(
+                    rows
+                );
+        } else if (page === 'users') {
+            html =
+                renderUsersTable(
+                    rows
+                );
+        } else {
+            html =
+                renderGenericTable(
+                    rows,
+                    page
+                );
+        }
+
+        container.innerHTML = html;
+    }
+
+    function renderIncomeTable(rows) {
+        let html =
+            '<table class="data-table">' +
+            '<thead>' +
+            '<tr>' +
+            '<th>วันที่</th>' +
+            '<th>เลขที่เอกสาร</th>' +
+            '<th>บัญชี</th>' +
+            '<th>หมวดหมู่</th>' +
+            '<th>รายการ</th>' +
+            '<th>ช่องทางชำระ</th>' +
+            '<th class="text-right">จำนวนเงิน</th>' +
+            '<th class="text-center">จัดการ</th>' +
+            '</tr>' +
+            '</thead>' +
+            '<tbody>';
+
+        rows.forEach(
+            function (row) {
+                html +=
+                    '<tr>' +
+                    '<td>' +
+                    escapeHtml(
+                        formatDate(
+                            row.date
+                        )
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.docNo ||
+                        row.documentNo ||
+                        '-'
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        getAccountName(
+                            row.accountId ||
+                            row.account
+                        )
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        getCategoryName(
+                            row.categoryId ||
+                            row.category
+                        )
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.description ||
+                        row.counterpartyName ||
+                        '-'
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.paymentMethod ||
+                        '-'
+                    ) +
+                    '</td>' +
+                    '<td class="text-right amount-income">' +
+                    escapeHtml(
+                        formatMoney(
+                            row.amount
+                        )
+                    ) +
+                    '</td>' +
+                    '<td class="text-center">' +
+                    createRowActions(
+                        'income',
+                        row
+                    ) +
+                    '</td>' +
+                    '</tr>';
+            }
+        );
+
+        html +=
+            '</tbody></table>';
+
+        return html;
+    }
+
+    function renderExpenseTable(rows) {
+        let html =
+            '<table class="data-table">' +
+            '<thead>' +
+            '<tr>' +
+            '<th>วันที่</th>' +
+            '<th>เลขที่เอกสาร</th>' +
+            '<th>บัญชี</th>' +
+            '<th>หมวดหมู่</th>' +
+            '<th>รายการ</th>' +
+            '<th>ช่องทางชำระ</th>' +
+            '<th class="text-right">จำนวนเงิน</th>' +
+            '<th class="text-center">จัดการ</th>' +
+            '</tr>' +
+            '</thead>' +
+            '<tbody>';
+
+        rows.forEach(
+            function (row) {
+                html +=
+                    '<tr>' +
+                    '<td>' +
+                    escapeHtml(
+                        formatDate(
+                            row.date
+                        )
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.docNo ||
+                        row.documentNo ||
+                        '-'
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        getAccountName(
+                            row.accountId ||
+                            row.account
+                        )
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        getCategoryName(
+                            row.categoryId ||
+                            row.category
+                        )
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.description ||
+                        row.counterpartyName ||
+                        '-'
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.paymentMethod ||
+                        '-'
+                    ) +
+                    '</td>' +
+                    '<td class="text-right amount-expense">' +
+                    escapeHtml(
+                        formatMoney(
+                            row.amount
+                        )
+                    ) +
+                    '</td>' +
+                    '<td class="text-center">' +
+                    createRowActions(
+                        'expense',
+                        row
+                    ) +
+                    '</td>' +
+                    '</tr>';
+            }
+        );
+
+        html +=
+            '</tbody></table>';
+
+        return html;
+    }
+
+    function renderTransferTable(rows) {
+        let html =
+            '<table class="data-table">' +
+            '<thead>' +
+            '<tr>' +
+            '<th>วันที่</th>' +
+            '<th>เลขที่เอกสาร</th>' +
+            '<th>จากบัญชี</th>' +
+            '<th>ไปบัญชี</th>' +
+            '<th>รายละเอียด</th>' +
+            '<th class="text-right">จำนวนเงิน</th>' +
+            '<th class="text-center">จัดการ</th>' +
+            '</tr>' +
+            '</thead>' +
+            '<tbody>';
+
+        rows.forEach(
+            function (row) {
+                html +=
+                    '<tr>' +
+                    '<td>' +
+                    escapeHtml(
+                        formatDate(
+                            row.date
+                        )
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.docNo ||
+                        row.documentNo ||
+                        '-'
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        getAccountName(
+                            row.fromAccountId ||
+                            row.fromAccount
+                        )
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        getAccountName(
+                            row.toAccountId ||
+                            row.toAccount
+                        )
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.description ||
+                        '-'
+                    ) +
+                    '</td>' +
+                    '<td class="text-right">' +
+                    escapeHtml(
+                        formatMoney(
+                            row.amount
+                        )
+                    ) +
+                    '</td>' +
+                    '<td class="text-center">' +
+                    createRowActions(
+                        'transfers',
+                        row
+                    ) +
+                    '</td>' +
+                    '</tr>';
+            }
+        );
+
+        html +=
+            '</tbody></table>';
+
+        return html;
+    }
+
+    function renderAccountsTable(rows) {
+        let html =
+            '<table class="data-table">' +
+            '<thead>' +
+            '<tr>' +
+            '<th>รหัสบัญชี</th>' +
+            '<th>ชื่อบัญชี</th>' +
+            '<th>ประเภท</th>' +
+            '<th class="text-right">ยอดยกมา</th>' +
+            '<th>สถานะ</th>' +
+            '<th>รายละเอียด</th>' +
+            '<th class="text-center">จัดการ</th>' +
+            '</tr>' +
+            '</thead>' +
+            '<tbody>';
+
+        rows.forEach(
+            function (row) {
+                html +=
+                    '<tr>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.code ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.name ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.type ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td class="text-right">' +
+                    escapeHtml(
+                        formatMoney(
+                            row.openingBalance
+                        )
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    renderStatus(
+                        row.active
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.description ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td class="text-center">' +
+                    createRowActions(
+                        'accounts',
+                        row
+                    ) +
+                    '</td>' +
+                    '</tr>';
+            }
+        );
+
+        html +=
+            '</tbody></table>';
+
+        return html;
+    }
+
+    function renderCategoriesTable(rows) {
+        let html =
+            '<table class="data-table">' +
+            '<thead>' +
+            '<tr>' +
+            '<th>รหัส</th>' +
+            '<th>ชื่อหมวดหมู่</th>' +
+            '<th>ประเภท</th>' +
+            '<th>สถานะ</th>' +
+            '<th>รายละเอียด</th>' +
+            '<th class="text-center">จัดการ</th>' +
+            '</tr>' +
+            '</thead>' +
+            '<tbody>';
+
+        rows.forEach(
+            function (row) {
+                html +=
+                    '<tr>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.code ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.name ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.type ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    renderStatus(
+                        row.active
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.description ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td class="text-center">' +
+                    createRowActions(
+                        'categories',
+                        row
+                    ) +
+                    '</td>' +
+                    '</tr>';
+            }
+        );
+
+        html +=
+            '</tbody></table>';
+
+        return html;
+    }
+
+    function renderCustomersTable(rows) {
+        return renderPartyTable(
+            rows,
+            'customers'
+        );
+    }
+
+    function renderVendorsTable(rows) {
+        return renderPartyTable(
+            rows,
+            'vendors'
+        );
+    }
+
+    function renderPartyTable(rows, entity) {
+        let html =
+            '<table class="data-table">' +
+            '<thead>' +
+            '<tr>' +
+            '<th>รหัส</th>' +
+            '<th>ชื่อ</th>' +
+            '<th>เลขประจำตัวผู้เสียภาษี</th>' +
+            '<th>ผู้ติดต่อ</th>' +
+            '<th>โทรศัพท์</th>' +
+            '<th>อีเมล</th>' +
+            '<th>สถานะ</th>' +
+            '<th class="text-center">จัดการ</th>' +
+            '</tr>' +
+            '</thead>' +
+            '<tbody>';
+
+        rows.forEach(
+            function (row) {
+                html +=
+                    '<tr>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.code ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.name ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.taxId ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.contactPerson ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.phone ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.email ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    renderStatus(
+                        row.active
+                    ) +
+                    '</td>' +
+                    '<td class="text-center">' +
+                    createRowActions(
+                        entity,
+                        row
+                    ) +
+                    '</td>' +
+                    '</tr>';
+            }
+        );
+
+        html +=
+            '</tbody></table>';
+
+        return html;
+    }
+
+    function renderDocumentsTable(rows) {
+        let html =
+            '<table class="data-table">' +
+            '<thead>' +
+            '<tr>' +
+            '<th>วันที่</th>' +
+            '<th>เลขที่เอกสาร</th>' +
+            '<th>ประเภท</th>' +
+            '<th>ลูกค้า / ผู้จำหน่าย</th>' +
+            '<th>สถานะ</th>' +
+            '<th class="text-right">ยอดรวม</th>' +
+            '<th class="text-center">จัดการ</th>' +
+            '</tr>' +
+            '</thead>' +
+            '<tbody>';
+
+        rows.forEach(
+            function (row) {
+                const type =
+                    getDocumentTypeName(
+                        row.docType ||
+                        row.documentType ||
+                        row.type
+                    );
+
+                html +=
+                    '<tr>' +
+                    '<td>' +
+                    escapeHtml(
+                        formatDate(
+                            row.date
+                        )
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.docNo ||
+                        row.documentNo ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        type
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.partyName ||
+                        row.customerName ||
+                        row.vendorName ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    renderDocumentStatus(
+                        row.status
+                    ) +
+                    '</td>' +
+                    '<td class="text-right">' +
+                    escapeHtml(
+                        formatMoney(
+                            row.total ||
+                            row.grandTotal ||
+                            row.amount
+                        )
+                    ) +
+                    '</td>' +
+                    '<td class="text-center">' +
+                    createDocumentActions(
+                        row
+                    ) +
+                    '</td>' +
+                    '</tr>';
+            }
+        );
+
+        html +=
+            '</tbody></table>';
+
+        return html;
+    }
+
+    function renderUsersTable(rows) {
+        let html =
+            '<table class="data-table">' +
+            '<thead>' +
+            '<tr>' +
+            '<th>ชื่อผู้ใช้</th>' +
+            '<th>ชื่อ-นามสกุล</th>' +
+            '<th>สิทธิ์</th>' +
+            '<th>สถานะ</th>' +
+            '<th>เข้าสู่ระบบล่าสุด</th>' +
+            '<th class="text-center">จัดการ</th>' +
+            '</tr>' +
+            '</thead>' +
+            '<tbody>';
+
+        rows.forEach(
+            function (row) {
+                html +=
+                    '<tr>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.username ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.fullName ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        row.role ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    renderStatus(
+                        row.active
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        formatDateTime(
+                            row.lastLoginAt
+                        )
+                    ) +
+                    '</td>' +
+                    '<td class="text-center">' +
+                    createRowActions(
+                        'users',
+                        row
+                    ) +
+                    '</td>' +
+                    '</tr>';
+            }
+        );
+
+        html +=
+            '</tbody></table>';
+
+        return html;
+    }
+
+    function renderGenericTable(rows, page) {
+        const keys =
+            getUsefulObjectKeys(
+                rows
+            );
+
+        if (!keys.length) {
+            return (
+                '<div class="empty-state">ไม่พบข้อมูล</div>'
+            );
+        }
+
+        let html =
+            '<table class="data-table">' +
+            '<thead><tr>';
+
+        keys.forEach(
+            function (key) {
+                html +=
+                    '<th>' +
+                    escapeHtml(
+                        prettifyKey(
+                            key
+                        )
+                    ) +
+                    '</th>';
+            }
+        );
+
+        html +=
+            '<th>จัดการ</th>' +
+            '</tr></thead><tbody>';
+
+        rows.forEach(
+            function (row) {
+                html +=
+                    '<tr>';
+
+                keys.forEach(
+                    function (key) {
+                        html +=
+                            '<td>' +
+                            escapeHtml(
+                                displayValue(
+                                    row[key]
+                                )
+                            ) +
+                            '</td>';
+                    }
+                );
+
+                html +=
+                    '<td>' +
+                    createRowActions(
+                        page,
+                        row
+                    ) +
+                    '</td>' +
+                    '</tr>';
+            }
+        );
+
+        html +=
+            '</tbody></table>';
+
+        return html;
+    }
+
+    function getUsefulObjectKeys(rows) {
+        const keys = [];
+        const excluded = [
+            'passwordHash',
+            'salt'
+        ];
+
+        rows.forEach(
+            function (row) {
+                if (
+                    !row ||
+                    typeof row !== 'object'
+                ) {
+                    return;
+                }
+
+                Object.keys(row).forEach(
+                    function (key) {
+                        if (
+                            excluded.indexOf(
+                                key
+                            ) === -1 &&
+                            keys.indexOf(
+                                key
+                            ) === -1
+                        ) {
+                            keys.push(key);
+                        }
+                    }
+                );
+            }
+        );
+
+        return keys.slice(0, 15);
+    }
+
+    function prettifyKey(key) {
+        const map = {
+            id: 'ID',
+            date: 'วันที่',
+            docNo: 'เลขที่เอกสาร',
+            code: 'รหัส',
+            name: 'ชื่อ',
+            description: 'รายละเอียด',
+            amount: 'จำนวนเงิน',
+            active: 'สถานะ',
+            createdAt: 'สร้างเมื่อ',
+            updatedAt: 'แก้ไขเมื่อ',
+            reference: 'อ้างอิง'
+        };
+
+        return map[key] ||
+            String(key)
+                .replace(
+                    /([A-Z])/g,
+                    ' $1'
+                )
+                .replace(
+                    /^./,
+                    function (char) {
+                        return char.toUpperCase();
+                    }
+                );
+    }
+
+    function displayValue(value) {
+        if (
+            value === null ||
+            value === undefined
+        ) {
+            return '';
+        }
+
+        if (
+            typeof value === 'boolean'
+        ) {
+            return value
+                ? 'ใช้งาน'
+                : 'ไม่ใช้งาน';
+        }
+
+        if (
+            typeof value === 'object'
+        ) {
+            return JSON.stringify(
+                value
+            );
+        }
+
+        return String(value);
+    }
+
+    function renderStatus(value) {
+        const active =
+            value === true ||
+            value === 'true' ||
+            value === 1 ||
+            value === '1' ||
+            value === 'ใช้งาน' ||
+            value === 'active';
+
+        return active
+            ? '<span class="badge badge-success">ใช้งาน</span>'
+            : '<span class="badge badge-secondary">ไม่ใช้งาน</span>';
+    }
+
+    function renderDocumentStatus(value) {
+        const status =
+            String(
+                value ||
+                'active'
+            ).toLowerCase();
+
+        if (
+            status === 'cancelled' ||
+            status === 'canceled' ||
+            status === 'ยกเลิก'
+        ) {
+            return (
+                '<span class="badge badge-danger">ยกเลิก</span>'
+            );
+        }
+
+        if (
+            status === 'paid' ||
+            status === 'ชำระแล้ว'
+        ) {
+            return (
+                '<span class="badge badge-success">ชำระแล้ว</span>'
+            );
+        }
+
+        if (
+            status === 'pending' ||
+            status === 'รอดำเนินการ'
+        ) {
+            return (
+                '<span class="badge badge-warning">รอดำเนินการ</span>'
+            );
+        }
+
+        return (
+            '<span class="badge badge-info">ใช้งาน</span>'
+        );
+    }
+
+    function createRowActions(entity, row) {
+        const id =
+            row.id ||
+            row.ID ||
+            row._id ||
+            '';
+
+        const encodedId =
+            escapeHtml(
+                String(id)
+            );
+
+        return (
+            '<div class="row-actions">' +
+            '<button type="button" class="btn-icon" title="แก้ไข" data-action="edit" data-entity="' +
+            escapeHtml(entity) +
+            '" data-id="' +
+            encodedId +
+            '">✎</button>' +
+            '<button type="button" class="btn-icon danger" title="ลบ" data-action="delete" data-entity="' +
+            escapeHtml(entity) +
+            '" data-id="' +
+            encodedId +
+            '">×</button>' +
+            '</div>'
+        );
+    }
+
+    function createDocumentActions(row) {
+        const id =
+            row.id ||
+            row.ID ||
+            '';
+
+        const encodedId =
+            escapeHtml(
+                String(id)
+            );
+
+        return (
+            '<div class="row-actions">' +
+            '<button type="button" class="btn-icon" title="ดู" data-action="view-document" data-id="' +
+            encodedId +
+            '">ดู</button>' +
+            '<button type="button" class="btn-icon" title="แก้ไข" data-action="edit" data-entity="documents" data-id="' +
+            encodedId +
+            '">✎</button>' +
+            '<button type="button" class="btn-icon" title="PDF" data-action="pdf-document" data-id="' +
+            encodedId +
+            '">PDF</button>' +
+            '<button type="button" class="btn-icon danger" title="ยกเลิก" data-action="cancel-document" data-id="' +
+            encodedId +
+            '">ยกเลิก</button>' +
+            '</div>'
+        );
+    }
+
+    function getAccountName(idOrValue) {
+        if (!idOrValue) {
+            return '-';
+        }
+
+        const value =
+            String(idOrValue);
+
+        const account =
+            state.accounts.find(
+                function (item) {
+                    return (
+                        String(
+                            item.id ||
+                            ''
+                        ) === value ||
+                        String(
+                            item.code ||
+                            ''
+                        ) === value ||
+                        String(
+                            item.name ||
+                            ''
+                        ) === value
+                    );
+                }
+            );
+
+        if (account) {
+            return (
+                account.code
+                    ? account.code +
+                      ' - '
+                    : ''
+            ) +
+            (
+                account.name ||
+                value
+            );
+        }
+
+        return value;
+    }
+
+    function getCategoryName(idOrValue) {
+        if (!idOrValue) {
+            return '-';
+        }
+
+        const value =
+            String(idOrValue);
+
+        const category =
+            state.categories.find(
+                function (item) {
+                    return (
+                        String(
+                            item.id ||
+                            ''
+                        ) === value ||
+                        String(
+                            item.code ||
+                            ''
+                        ) === value ||
+                        String(
+                            item.name ||
+                            ''
+                        ) === value
+                    );
+                }
+            );
+
+        if (category) {
+            return (
+                category.code
+                    ? category.code +
+                      ' - '
+                    : ''
+            ) +
+            (
+                category.name ||
+                value
+            );
+        }
+
+        return value;
+    }
+
+    function getDocumentTypeName(codeOrName) {
+        if (!codeOrName) {
+            return '-';
+        }
+
+        const value =
+            String(codeOrName);
+
+        const type =
+            (
+                state.documentTypes.length
+                    ? state.documentTypes
+                    : DOCUMENT_TYPES
+            ).find(
+                function (item) {
+                    return (
+                        String(
+                            item.code ||
+                            ''
+                        ) === value ||
+                        String(
+                            item.id ||
+                            ''
+                        ) === value ||
+                        String(
+                            item.name ||
+                            ''
+                        ) === value
+                    );
+                }
+            );
+
+        return type
+            ? (
+                type.name ||
+                type.label ||
+                value
+            )
+            : value;
+    }
+
+    function renderPagination(page, current, total) {
+        const container =
+            byId(
+                'entityPagination'
+            );
+
+        if (!container) {
+            return;
+        }
+
+        const totalPages =
+            Math.max(
+                1,
+                Math.ceil(
+                    total /
+                    state.pageSize
+                )
+            );
+
+        if (
+            totalPages <= 1
+        ) {
+            container.innerHTML =
+                '<div class="pagination-info">' +
+                'ทั้งหมด ' +
+                formatNumber(total) +
+                ' รายการ' +
+                '</div>';
+
+            return;
+        }
+
+        let html =
+            '<div class="pagination">' +
+            '<button type="button" class="pagination-btn" data-action="page" data-entity="' +
+            escapeHtml(page) +
+            '" data-page-number="' +
+            Math.max(
+                1,
+                current - 1
+            ) +
+            '"' +
+            (
+                current <= 1
+                    ? ' disabled'
+                    : ''
+            ) +
+            '>‹</button>';
+
+        const start =
+            Math.max(
+                1,
+                current - 2
+            );
+
+        const end =
+            Math.min(
+                totalPages,
+                current + 2
+            );
+
+        for (
+            let index = start;
+            index <= end;
+            index += 1
+        ) {
+            html +=
+                '<button type="button" class="pagination-btn ' +
+                (
+                    index === current
+                        ? 'active'
+                        : ''
+                ) +
+                '" data-action="page" data-entity="' +
+                escapeHtml(page) +
+                '" data-page-number="' +
+                index +
+                '">' +
+                index +
+                '</button>';
+        }
+
+        html +=
+            '<button type="button" class="pagination-btn" data-action="page" data-entity="' +
+            escapeHtml(page) +
+            '" data-page-number="' +
+            Math.min(
+                totalPages,
+                current + 1
+            ) +
+            '"' +
+            (
+                current >= totalPages
+                    ? ' disabled'
+                    : ''
+            ) +
+            '>›</button>' +
+            '<span class="pagination-info">ทั้งหมด ' +
+            formatNumber(total) +
+            ' รายการ</span>' +
+            '</div>';
+
+        container.innerHTML =
+            html;
+    }
+
+    async function applyFilter(page) {
+        const filters = {
+            dateFrom:
+                byId('filterDateFrom')
+                    ? byId('filterDateFrom').value
+                    : '',
+            dateTo:
+                byId('filterDateTo')
+                    ? byId('filterDateTo').value
+                    : '',
+            search:
+                byId('filterSearch')
+                    ? byId('filterSearch').value.trim()
+                    : '',
+            documentType:
+                byId('filterDocumentType')
+                    ? byId('filterDocumentType').value
+                    : ''
+        };
+
+        state.filters[page] =
+            filters;
+
+        await loadEntityRows(
+            page,
+            1
+        );
+    }
+
+    async function clearFilter(page) {
+        state.filters[page] =
+            {};
+
+        applyEntityFiltersToForm(
+            page,
+            {}
+        );
+
+        await loadEntityRows(
+            page,
+            1
+        );
+    }
+
+    function findCurrentRow(entity, id) {
+        const rows =
+            state.currentRows || [];
+
+        return rows.find(
+            function (row) {
+                return (
+                    String(
+                        row.id ||
+                        row.ID ||
+                        row._id ||
+                        ''
+                    ) ===
+                    String(id)
+                );
+            }
+        );
+    }
+
+    async function openCreateModal(entity) {
+        state.editingId = '';
+
+        if (entity === 'income') {
+            openIncomeModal();
+            return;
+        }
+
+        if (entity === 'expense') {
+            openExpenseModal();
+            return;
+        }
+
+        if (entity === 'transfers') {
+            openTransferModal();
+            return;
+        }
+
+        if (entity === 'accounts') {
+            openAccountModal();
+            return;
+        }
+
+        if (entity === 'categories') {
+            openCategoryModal();
+            return;
+        }
+
+        if (entity === 'customers') {
+            openPartyModal(
+                'customers'
+            );
+            return;
+        }
+
+        if (entity === 'vendors') {
+            openPartyModal(
+                'vendors'
+            );
+            return;
+        }
+
+        if (entity === 'documents') {
+            openDocumentModal();
+            return;
+        }
+
+        if (entity === 'users') {
+            if (!isAdmin()) {
+                showToast(
+                    'เฉพาะผู้ดูแลระบบเท่านั้นที่สามารถจัดการผู้ใช้งานได้',
+                    'warning'
+                );
+
+                return;
+            }
+
+            openUserModal();
+            return;
+        }
+    }
+
+    async function openEditModal(entity, id) {
+        const row =
+            findCurrentRow(
+                entity,
+                id
+            );
+
+        if (!row) {
+            try {
+                const response =
+                    await apiRequest(
+                        'get',
+                        {
+                            entity: entity,
+                            id: id
+                        }
+                    );
+
+                const data =
+                    unwrapResponse(
+                        response
+                    );
+
+                state.editingId = id;
+
+                if (entity === 'income') {
+                    openIncomeModal(
+                        data
+                    );
+                } else if (entity === 'expense') {
+                    openExpenseModal(
+                        data
+                    );
+                } else if (entity === 'transfers') {
+                    openTransferModal(
+                        data
+                    );
+                } else if (entity === 'accounts') {
+                    openAccountModal(
+                        data
+                    );
+                } else if (entity === 'categories') {
+                    openCategoryModal(
+                        data
+                    );
+                } else if (
+                    entity === 'customers' ||
+                    entity === 'vendors'
+                ) {
+                    openPartyModal(
+                        entity,
+                        data
+                    );
+                } else if (entity === 'documents') {
+                    openDocumentModal(
+                        data
+                    );
+                } else if (entity === 'users') {
+                    openUserModal(
+                        data
+                    );
+                }
+
+                return;
+            } catch (error) {
+                showToast(
+                    error.message ||
+                    'ไม่สามารถโหลดข้อมูลได้',
+                    'error'
+                );
+
+                return;
+            }
+        }
+
+        state.editingId =
+            id;
+
+        if (entity === 'income') {
+            openIncomeModal(
+                row
+            );
+            return;
+        }
+
+        if (entity === 'expense') {
+            openExpenseModal(
+                row
+            );
+            return;
+        }
+
+        if (entity === 'transfers') {
+            openTransferModal(
+                row
+            );
+            return;
+        }
+
+        if (entity === 'accounts') {
+            openAccountModal(
+                row
+            );
+            return;
+        }
+
+        if (entity === 'categories') {
+            openCategoryModal(
+                row
+            );
+            return;
+        }
+
+        if (
+            entity === 'customers' ||
+            entity === 'vendors'
+        ) {
+            openPartyModal(
+                entity,
+                row
+            );
+            return;
+        }
+
+        if (entity === 'documents') {
+            openDocumentModal(
+                row
+            );
+            return;
+        }
+
+        if (entity === 'users') {
+            openUserModal(
+                row
+            );
+        }
+    }
+
+    async function deleteEntity(entity, id) {
+        const confirmed =
+            await confirmAction(
+                'ยืนยันการลบรายการนี้หรือไม่?\nการลบข้อมูลอาจไม่สามารถย้อนกลับได้'
+            );
+
+        if (!confirmed) {
+            return;
+        }
+
+        const config =
+            ENTITY_CONFIG[entity];
+
+        if (!config) {
+            return;
+        }
+
+        try {
+            setLoading(
+                true,
+                'กำลังลบข้อมูล...'
+            );
+
+            await apiRequest(
+                config.deleteAction ||
+                'delete',
+                {
+                    entity: entity,
+                    sheet: config.sheet,
+                    id: id
+                }
+            );
+
+            showToast(
+                'ลบข้อมูลสำเร็จ',
+                'success'
+            );
+
+            await loadEntityRows(
+                entity,
+                state.currentPageNumber
+            );
+        } catch (error) {
+            console.error(
+                'DELETE ERROR:',
+                error
+            );
+
+            showToast(
+                error.message ||
+                'ไม่สามารถลบข้อมูลได้',
+                'error'
+            );
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    function openModal(options) {
+        const settings =
+            options || {};
+
+        let container =
+            byId('modalContainer');
+
+        if (!container) {
+            container =
+                document.createElement(
+                    'div'
+                );
+
+            container.id =
+                'modalContainer';
+
+            container.className =
+                'modal-container';
+
+            document.body.appendChild(
+                container
+            );
+        }
+
+        const fields =
+            settings.fields || [];
+
+        let fieldsHtml = '';
+
+        fields.forEach(
+            function (field) {
+                fieldsHtml +=
+                    createFormField(
+                        field
+                    );
+            }
+        );
+
+        container.innerHTML =
+            '<div class="modal-backdrop" data-modal-close></div>' +
+            '<div class="modal-dialog ' +
+            escapeHtml(
+                settings.size ||
+                ''
+            ) +
+            '">' +
+            '<div class="modal-header">' +
+            '<div>' +
+            '<h2>' +
+            escapeHtml(
+                settings.title ||
+                ''
+            ) +
+            '</h2>' +
+            (
+                settings.subtitle
+                    ? '<p>' +
+                      escapeHtml(
+                          settings.subtitle
+                      ) +
+                      '</p>'
+                    : ''
+            ) +
+            '</div>' +
+            '<button type="button" class="modal-close" data-modal-close>×</button>' +
+            '</div>' +
+            '<form id="dynamicModalForm" class="modal-form">' +
+            '<div class="modal-body">' +
+            fieldsHtml +
+            '</div>' +
+            '<div class="modal-footer">' +
+            '<button type="button" class="btn btn-secondary" data-modal-close>ยกเลิก</button>' +
+            '<button type="submit" class="btn btn-primary" id="modalSubmitButton">' +
+            escapeHtml(
+                settings.submitLabel ||
+                'บันทึก'
+            ) +
+            '</button>' +
+            '</div>' +
+            '</form>' +
+            '</div>';
+
+        showElement(
+            container
+        );
+
+        container.classList.add(
+            'open'
+        );
+
+        state.currentModal =
+            container;
+
+        const form =
+            byId(
+                'dynamicModalForm'
+            );
+
+        if (form) {
+            form.addEventListener(
+                'submit',
+                async function (event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+
+                    const values =
+                        collectFormValues(
+                            form,
+                            fields
+                        );
+
+                    try {
+                        setModalLoading(
+                            true
+                        );
+
+                        await settings.onSubmit(
+                            values
+                        );
+
+                        closeModal();
+                    } catch (error) {
+                        console.error(
+                            'MODAL SUBMIT ERROR:',
+                            error
+                        );
+
+                        showToast(
+                            error.message ||
+                            'ไม่สามารถบันทึกข้อมูลได้',
+                            'error',
+                            6000
+                        );
+                    } finally {
+                        setModalLoading(
+                            false
+                        );
+                    }
+
+                    return false;
+                }
+            );
+        }
+
+        container.addEventListener(
+            'click',
+            function (event) {
+                const target =
+                    event.target;
+
+                if (
+                    target &&
+                    target.closest(
+                        '[data-modal-close]'
+                    )
+                ) {
+                    closeModal();
+                }
+            }
+        );
+
+        if (
+            typeof settings.afterOpen ===
+            'function'
+        ) {
+            settings.afterOpen(
+                container
+            );
+        }
+    }
+
+    function closeModal() {
+        const container =
+            byId('modalContainer');
+
+        if (!container) {
+            return;
+        }
+
+        container.classList.remove(
+            'open'
+        );
+
+        hideElement(
+            container
+        );
+
+        container.innerHTML =
+            '';
+
+        state.currentModal =
+            null;
+    }
+
+    function setModalLoading(loading) {
+        const button =
+            byId(
+                'modalSubmitButton'
+            );
+
+        if (button) {
+            button.disabled =
+                loading;
+
+            button.textContent =
+                loading
+                    ? 'กำลังบันทึก...'
+                    : 'บันทึก';
+        }
+    }
+
+    function createFormField(field) {
+        const type =
+            field.type ||
+            'text';
+
+        const name =
+            field.name ||
+            '';
+
+        const label =
+            field.label ||
+            name;
+
+        const required =
+            field.required
+                ? ' required'
+                : '';
+
+        const wrapperClass =
+            field.className ||
+            'form-group';
+
+        const value =
+            field.value !== undefined &&
+            field.value !== null
+                ? field.value
+                : '';
+
+        let input = '';
+
+        if (type === 'textarea') {
+            input =
+                '<textarea id="field-' +
+                escapeHtml(name) +
+                '" name="' +
+                escapeHtml(name) +
+                '" rows="' +
+                escapeHtml(
+                    field.rows ||
+                    '3'
+                ) +
+                '"' +
+                required +
+                '>' +
+                escapeHtml(
+                    value
+                ) +
+                '</textarea>';
+        } else if (
+            type === 'select'
+        ) {
+            input =
+                '<select id="field-' +
+                escapeHtml(name) +
+                '" name="' +
+                escapeHtml(name) +
+                '"' +
+                required +
+                '>' +
+                (
+                    field.optionsHtml ||
+                    createSelectOptions(
+                        field.options ||
+                        [],
+                        value
+                    )
+                ) +
+                '</select>';
+        } else if (
+            type === 'checkbox'
+        ) {
+            input =
+                '<label class="checkbox-label">' +
+                '<input type="checkbox" id="field-' +
+                escapeHtml(name) +
+                '" name="' +
+                escapeHtml(name) +
+                '"' +
+                (
+                    value === true ||
+                    value === 'true' ||
+                    value === 1 ||
+                    value === '1'
+                        ? ' checked'
+                        : ''
+                ) +
+                '>' +
+                '<span>' +
+                escapeHtml(
+                    field.checkboxLabel ||
+                    label
+                ) +
+                '</span>' +
+                '</label>';
+        } else {
+            input =
+                '<input type="' +
+                escapeHtml(type) +
+                '" id="field-' +
+                escapeHtml(name) +
+                '" name="' +
+                escapeHtml(name) +
+                '" value="' +
+                escapeHtml(
+                    value
+                ) +
+                '"' +
+                required +
+                (
+                    field.placeholder
+                        ? ' placeholder="' +
+                          escapeHtml(
+                              field.placeholder
+                          ) +
+                          '"'
+                        : ''
+                ) +
+                (
+                    field.step
+                        ? ' step="' +
+                          escapeHtml(
+                              field.step
+                          ) +
+                          '"'
+                        : ''
+                ) +
+                (
+                    field.min !== undefined
+                        ? ' min="' +
+                          escapeHtml(
+                              field.min
+                          ) +
+                          '"'
+                        : ''
+                ) +
+                (
+                    field.readonly
+                        ? ' readonly'
+                        : ''
+                ) +
+                '>';
+        }
+
+        if (type === 'checkbox') {
+            return (
+                '<div class="' +
+                escapeHtml(
+                    wrapperClass
+                ) +
+                ' checkbox-group">' +
+                input +
+                '</div>'
+            );
+        }
+
+        return (
+            '<div class="' +
+            escapeHtml(
+                wrapperClass
+            ) +
+            '">' +
+            '<label for="field-' +
+            escapeHtml(name) +
+            '">' +
+            escapeHtml(label) +
+            (
+                field.required
+                    ? ' <span class="required">*</span>'
+                    : ''
+            ) +
+            '</label>' +
+            input +
+            (
+                field.help
+                    ? '<small class="form-help">' +
+                      escapeHtml(
+                          field.help
+                      ) +
+                      '</small>'
+                    : ''
+            ) +
+            '</div>'
+        );
+    }
+
+    function createSelectOptions(options, selected) {
+        let html =
+            '<option value="">-- เลือก --</option>';
+
+        options.forEach(
+            function (option) {
+                const value =
+                    option.value !== undefined
+                        ? option.value
+                        : option.id;
+
+                const label =
+                    option.label !== undefined
+                        ? option.label
+                        : option.name;
+
+                html +=
+                    '<option value="' +
+                    escapeHtml(
+                        value
+                    ) +
+                    '"' +
+                    (
+                        String(
+                            value
+                        ) ===
+                        String(
+                            selected
+                        )
+                            ? ' selected'
+                            : ''
+                    ) +
+                    '>' +
+                    escapeHtml(
+                        label
+                    ) +
+                    '</option>';
+            }
+        );
+
+        return html;
+    }
+
+    function collectFormValues(form, fields) {
+        const values = {};
+
+        fields.forEach(
+            function (field) {
+                const name =
+                    field.name;
+
+                const element =
+                    form.querySelector(
+                        '[name="' +
+                        CSS.escape(
+                            name
+                        ) +
+                        '"]'
+                    );
+
+                if (!element) {
+                    values[name] =
+                        field.value !== undefined
+                            ? field.value
+                            : '';
+
+                    return;
+                }
+
+                if (
+                    field.type ===
+                    'checkbox'
+                ) {
+                    values[name] =
+                        element.checked;
+                } else if (
+                    field.type ===
+                    'number'
+                ) {
+                    values[name] =
+                        parseNumber(
+                            element.value
+                        );
+                } else {
+                    values[name] =
+                        element.value;
+                }
+            }
+        );
+
+        return values;
+    }
+
+    function accountOptions(selected) {
+        return state.accounts.map(
+            function (account) {
+                return {
+                    value:
+                        account.id ||
+                        account.code ||
+                        '',
+                    label:
+                        (
+                            account.code
+                                ? account.code +
+                                  ' - '
+                                : ''
+                        ) +
+                        (
+                            account.name ||
+                            ''
+                        )
+                };
+            }
+        );
+    }
+
+    function categoryOptions(type, selected) {
+        const filtered =
+            state.categories.filter(
+                function (category) {
+                    if (!type) {
+                        return true;
+                    }
+
+                    return (
+                        !category.type ||
+                        String(
+                            category.type
+                        ).toLowerCase() ===
+                        String(
+                            type
+                        ).toLowerCase()
+                    );
+                }
+            );
+
+        return filtered.map(
+            function (category) {
+                return {
+                    value:
+                        category.id ||
+                        category.code ||
+                        '',
+                    label:
+                        (
+                            category.code
+                                ? category.code +
+                                  ' - '
+                                : ''
+                        ) +
+                        (
+                            category.name ||
+                            ''
+                        )
+                };
+            }
+        );
+    }
+
+    function openIncomeModal(data) {
+        const row =
+            data || {};
+
+        const fields = [
+            {
+                name: 'date',
+                label: 'วันที่',
+                type: 'date',
+                value:
+                    toInputDate(
+                        row.date
+                    ),
+                required: true
+            },
+            {
+                name: 'docNo',
+                label: 'เลขที่เอกสาร',
+                type: 'text',
+                value:
+                    row.docNo ||
+                    row.documentNo ||
+                    '',
+                placeholder:
+                    'เว้นว่างได้หากต้องการให้ระบบจัดเลขที่'
+            },
+            {
+                name: 'accountId',
+                label: 'บัญชีรับเงิน',
+                type: 'select',
+                value:
+                    row.accountId ||
+                    row.account ||
+                    '',
+                options:
+                    accountOptions(
+                        row.accountId
+                    ),
+                required: true
+            },
+            {
+                name: 'categoryId',
+                label: 'หมวดหมู่รายรับ',
+                type: 'select',
+                value:
+                    row.categoryId ||
+                    row.category ||
+                    '',
+                options:
+                    categoryOptions(
+                        'income',
+                        row.categoryId
+                    )
+            },
+            {
+                name: 'counterpartyName',
+                label: 'ผู้จ่าย / ลูกค้า',
+                type: 'text',
+                value:
+                    row.counterpartyName ||
+                    row.customerName ||
+                    ''
+            },
+            {
+                name: 'description',
+                label: 'รายละเอียด',
+                type: 'text',
+                value:
+                    row.description ||
+                    '',
+                required: true
+            },
+            {
+                name: 'amount',
+                label: 'จำนวนเงิน',
+                type: 'number',
+                value:
+                    row.amount ||
+                    '',
+                min: '0',
+                step: '0.01',
+                required: true
+            },
+            {
+                name: 'paymentMethod',
+                label: 'ช่องทางรับเงิน',
+                type: 'select',
+                value:
+                    row.paymentMethod ||
+                    '',
+                options: [
+                    {
+                        value: 'เงินสด',
+                        label: 'เงินสด'
+                    },
+                    {
+                        value: 'โอนเงิน',
+                        label: 'โอนเงิน'
+                    },
+                    {
+                        value: 'บัตร',
+                        label: 'บัตร'
+                    },
+                    {
+                        value: 'เช็ค',
+                        label: 'เช็ค'
+                    },
+                    {
+                        value: 'อื่น ๆ',
+                        label: 'อื่น ๆ'
+                    }
+                ]
+            },
+            {
+                name: 'reference',
+                label: 'เลขอ้างอิง',
+                type: 'text',
+                value:
+                    row.reference ||
+                    ''
+            }
+        ];
+
+        openModal({
+            title:
+                state.editingId
+                    ? 'แก้ไขรายรับ'
+                    : 'เพิ่มรายรับ',
+            subtitle:
+                'กรอกข้อมูลรายการรายรับ',
+            fields: fields,
+            submitLabel:
+                'บันทึกรายรับ',
+            onSubmit:
+                async function (
+                    values
+                ) {
+                    values.id =
+                        state.editingId ||
+                        row.id ||
+                        '';
+
+                    await apiRequest(
+                        'saveincome',
+                        {
+                            data: values
+                        }
+                    );
+
+                    showToast(
+                        'บันทึกรายรับสำเร็จ',
+                        'success'
+                    );
+
+                    await loadEntityRows(
+                        'income',
+                        state.currentPageNumber
+                    );
+                }
+        });
+    }
+
+    function openExpenseModal(data) {
+        const row =
+            data || {};
+
+        const fields = [
+            {
+                name: 'date',
+                label: 'วันที่',
+                type: 'date',
+                value:
+                    toInputDate(
+                        row.date
+                    ),
+                required: true
+            },
+            {
+                name: 'docNo',
+                label: 'เลขที่เอกสาร',
+                type: 'text',
+                value:
+                    row.docNo ||
+                    row.documentNo ||
+                    '',
+                placeholder:
+                    'เว้นว่างได้หากต้องการให้ระบบจัดเลขที่'
+            },
+            {
+                name: 'accountId',
+                label: 'บัญชีจ่ายเงิน',
+                type: 'select',
+                value:
+                    row.accountId ||
+                    row.account ||
+                    '',
+                options:
+                    accountOptions(
+                        row.accountId
+                    ),
+                required: true
+            },
+            {
+                name: 'categoryId',
+                label: 'หมวดหมู่รายจ่าย',
+                type: 'select',
+                value:
+                    row.categoryId ||
+                    row.category ||
+                    '',
+                options:
+                    categoryOptions(
+                        'expense',
+                        row.categoryId
+                    )
+            },
+            {
+                name: 'counterpartyName',
+                label: 'ผู้รับเงิน / ผู้จำหน่าย',
+                type: 'text',
+                value:
+                    row.counterpartyName ||
+                    row.vendorName ||
+                    ''
+            },
+            {
+                name: 'description',
+                label: 'รายละเอียด',
+                type: 'text',
+                value:
+                    row.description ||
+                    '',
+                required: true
+            },
+            {
+                name: 'amount',
+                label: 'จำนวนเงิน',
+                type: 'number',
+                value:
+                    row.amount ||
+                    '',
+                min: '0',
+                step: '0.01',
+                required: true
+            },
+            {
+                name: 'paymentMethod',
+                label: 'ช่องทางจ่ายเงิน',
+                type: 'select',
+                value:
+                    row.paymentMethod ||
+                    '',
+                options: [
+                    {
+                        value: 'เงินสด',
+                        label: 'เงินสด'
+                    },
+                    {
+                        value: 'โอนเงิน',
+                        label: 'โอนเงิน'
+                    },
+                    {
+                        value: 'บัตร',
+                        label: 'บัตร'
+                    },
+                    {
+                        value: 'เช็ค',
+                        label: 'เช็ค'
+                    },
+                    {
+                        value: 'อื่น ๆ',
+                        label: 'อื่น ๆ'
+                    }
+                ]
+            },
+            {
+                name: 'reference',
+                label: 'เลขอ้างอิง',
+                type: 'text',
+                value:
+                    row.reference ||
+                    ''
+            }
+        ];
+
+        openModal({
+            title:
+                state.editingId
+                    ? 'แก้ไขรายจ่าย'
+                    : 'เพิ่มรายจ่าย',
+            subtitle:
+                'กรอกข้อมูลรายการรายจ่าย',
+            fields: fields,
+            submitLabel:
+                'บันทึกรายจ่าย',
+            onSubmit:
+                async function (
+                    values
+                ) {
+                    values.id =
+                        state.editingId ||
+                        row.id ||
+                        '';
+
+                    await apiRequest(
+                        'saveexpense',
+                        {
+                            data: values
+                        }
+                    );
+
+                    showToast(
+                        'บันทึกรายจ่ายสำเร็จ',
+                        'success'
+                    );
+
+                    await loadEntityRows(
+                        'expense',
+                        state.currentPageNumber
+                    );
+                }
+        });
+    }
+
+    function openTransferModal(data) {
+        const row =
+            data || {};
+
+        const fields = [
+            {
+                name: 'date',
+                label: 'วันที่',
+                type: 'date',
+                value:
+                    toInputDate(
+                        row.date
+                    ),
+                required: true
+            },
+            {
+                name: 'docNo',
+                label: 'เลขที่เอกสาร',
+                type: 'text',
+                value:
+                    row.docNo ||
+                    row.documentNo ||
+                    ''
+            },
+            {
+                name: 'fromAccountId',
+                label: 'จากบัญชี',
+                type: 'select',
+                value:
+                    row.fromAccountId ||
+                    row.fromAccount ||
+                    '',
+                options:
+                    accountOptions(
+                        row.fromAccountId
+                    ),
+                required: true
+            },
+            {
+                name: 'toAccountId',
+                label: 'ไปบัญชี',
+                type: 'select',
+                value:
+                    row.toAccountId ||
+                    row.toAccount ||
+                    '',
+                options:
+                    accountOptions(
+                        row.toAccountId
+                    ),
+                required: true
+            },
+            {
+                name: 'amount',
+                label: 'จำนวนเงิน',
+                type: 'number',
+                value:
+                    row.amount ||
+                    '',
+                min: '0',
+                step: '0.01',
+                required: true
+            },
+            {
+                name: 'description',
+                label: 'รายละเอียด',
+                type: 'text',
+                value:
+                    row.description ||
+                    ''
+            },
+            {
+                name: 'reference',
+                label: 'เลขอ้างอิง',
+                type: 'text',
+                value:
+                    row.reference ||
+                    ''
+            }
+        ];
+
+        openModal({
+            title:
+                state.editingId
+                    ? 'แก้ไขรายการโอน'
+                    : 'โอนเงินระหว่างบัญชี',
+            subtitle:
+                'บันทึกการเคลื่อนไหวระหว่างบัญชี',
+            fields: fields,
+            submitLabel:
+                'บันทึกการโอน',
+            onSubmit:
+                async function (
+                    values
+                ) {
+                    if (
+                        values.fromAccountId ===
+                        values.toAccountId
+                    ) {
+                        throw new Error(
+                            'บัญชีต้นทางและบัญชีปลายทางต้องไม่เป็นบัญชีเดียวกัน'
+                        );
+                    }
+
+                    values.id =
+                        state.editingId ||
+                        row.id ||
+                        '';
+
+                    await apiRequest(
+                        'savetransfer',
+                        {
+                            data: values
+                        }
+                    );
+
+                    showToast(
+                        'บันทึกรายการโอนสำเร็จ',
+                        'success'
+                    );
+
+                    await loadEntityRows(
+                        'transfers',
+                        state.currentPageNumber
+                    );
+                }
+        });
+    }
+
+    function openAccountModal(data) {
+        const row =
+            data || {};
+
+        const fields = [
+            {
+                name: 'code',
+                label: 'รหัสบัญชี',
+                type: 'text',
+                value:
+                    row.code ||
+                    '',
+                required: true
+            },
+            {
+                name: 'name',
+                label: 'ชื่อบัญชี',
+                type: 'text',
+                value:
+                    row.name ||
+                    '',
+                required: true
+            },
+            {
+                name: 'type',
+                label: 'ประเภทบัญชี',
+                type: 'select',
+                value:
+                    row.type ||
+                    '',
+                options: [
+                    {
+                        value: 'เงินสด',
+                        label: 'เงินสด'
+                    },
+                    {
+                        value: 'ธนาคาร',
+                        label: 'ธนาคาร'
+                    },
+                    {
+                        value: 'e-Wallet',
+                        label: 'e-Wallet'
+                    },
+                    {
+                        value: 'อื่น ๆ',
+                        label: 'อื่น ๆ'
+                    }
+                ],
+                required: true
+            },
+            {
+                name: 'openingBalance',
+                label: 'ยอดยกมา',
+                type: 'number',
+                value:
+                    row.openingBalance ||
+                    0,
+                step: '0.01'
+            },
+            {
+                name: 'active',
+                label: 'สถานะ',
+                type: 'checkbox',
+                value:
+                    row.active !== undefined
+                        ? row.active
+                        : true,
+                checkboxLabel:
+                    'เปิดใช้งานบัญชี'
+            },
+            {
+                name: 'description',
+                label: 'รายละเอียด',
+                type: 'textarea',
+                value:
+                    row.description ||
+                    ''
+            }
+        ];
+
+        openModal({
+            title:
+                state.editingId
+                    ? 'แก้ไขบัญชี'
+                    : 'เพิ่มบัญชี',
+            fields: fields,
+            submitLabel:
+                'บันทึกบัญชี',
+            onSubmit:
+                async function (
+                    values
+                ) {
+                    values.id =
+                        state.editingId ||
+                        row.id ||
+                        '';
+
+                    const action =
+                        values.id
+                            ? 'update'
+                            : 'create';
+
+                    await apiRequest(
+                        action,
+                        {
+                            entity: 'accounts',
+                            sheet: 'Accounts',
+                            data: values,
+                            id: values.id
+                        }
+                    );
+
+                    showToast(
+                        'บันทึกบัญชีสำเร็จ',
+                        'success'
+                    );
+
+                    await loadBootstrap();
+
+                    await loadEntityRows(
+                        'accounts',
+                        1
+                    );
+                }
+        });
+    }
+
+    function openCategoryModal(data) {
+        const row =
+            data || {};
+
+        const fields = [
+            {
+                name: 'code',
+                label: 'รหัสหมวดหมู่',
+                type: 'text',
+                value:
+                    row.code ||
+                    '',
+                required: true
+            },
+            {
+                name: 'name',
+                label: 'ชื่อหมวดหมู่',
+                type: 'text',
+                value:
+                    row.name ||
+                    '',
+                required: true
+            },
+            {
+                name: 'type',
+                label: 'ประเภท',
+                type: 'select',
+                value:
+                    row.type ||
+                    '',
+                options: [
+                    {
+                        value: 'income',
+                        label: 'รายรับ'
+                    },
+                    {
+                        value: 'expense',
+                        label: 'รายจ่าย'
+                    },
+                    {
+                        value: 'both',
+                        label: 'ใช้ได้ทั้งสองประเภท'
+                    }
+                ],
+                required: true
+            },
+            {
+                name: 'active',
+                label: 'สถานะ',
+                type: 'checkbox',
+                value:
+                    row.active !== undefined
+                        ? row.active
+                        : true,
+                checkboxLabel:
+                    'เปิดใช้งานหมวดหมู่'
+            },
+            {
+                name: 'description',
+                label: 'รายละเอียด',
+                type: 'textarea',
+                value:
+                    row.description ||
+                    ''
+            }
+        ];
+
+        openModal({
+            title:
+                state.editingId
+                    ? 'แก้ไขหมวดหมู่'
+                    : 'เพิ่มหมวดหมู่',
+            fields: fields,
+            submitLabel:
+                'บันทึกหมวดหมู่',
+            onSubmit:
+                async function (
+                    values
+                ) {
+                    values.id =
+                        state.editingId ||
+                        row.id ||
+                        '';
+
+                    const action =
+                        values.id
+                            ? 'update'
+                            : 'create';
+
+                    await apiRequest(
+                        action,
+                        {
+                            entity: 'categories',
+                            sheet: 'Categories',
+                            data: values,
+                            id: values.id
+                        }
+                    );
+
+                    showToast(
+                        'บันทึกหมวดหมู่สำเร็จ',
+                        'success'
+                    );
+
+                    await loadBootstrap();
+
+                    await loadEntityRows(
+                        'categories',
+                        1
+                    );
+                }
+        });
+    }
+
+    function openPartyModal(entity, data) {
+        const row =
+            data || {};
+
+        const title =
+            entity === 'customers'
+                ? 'ลูกค้า'
+                : 'ผู้จำหน่าย / เจ้าหนี้';
+
+        const fields = [
+            {
+                name: 'code',
+                label: 'รหัส',
+                type: 'text',
+                value:
+                    row.code ||
+                    '',
+                required: true
+            },
+            {
+                name: 'name',
+                label: 'ชื่อ',
+                type: 'text',
+                value:
+                    row.name ||
+                    '',
+                required: true
+            },
+            {
+                name: 'taxId',
+                label: 'เลขประจำตัวผู้เสียภาษี',
+                type: 'text',
+                value:
+                    row.taxId ||
+                    ''
+            },
+            {
+                name: 'address',
+                label: 'ที่อยู่',
+                type: 'textarea',
+                value:
+                    row.address ||
+                    ''
+            },
+            {
+                name: 'phone',
+                label: 'โทรศัพท์',
+                type: 'text',
+                value:
+                    row.phone ||
+                    ''
+            },
+            {
+                name: 'email',
+                label: 'อีเมล',
+                type: 'email',
+                value:
+                    row.email ||
+                    ''
+            },
+            {
+                name: 'contactPerson',
+                label: 'ผู้ติดต่อ',
+                type: 'text',
+                value:
+                    row.contactPerson ||
+                    ''
+            },
+            {
+                name: 'active',
+                label: 'สถานะ',
+                type: 'checkbox',
+                value:
+                    row.active !== undefined
+                        ? row.active
+                        : true,
+                checkboxLabel:
+                    'เปิดใช้งาน'
+            },
+            {
+                name: 'notes',
+                label: 'หมายเหตุ',
+                type: 'textarea',
+                value:
+                    row.notes ||
+                    ''
+            }
+        ];
+
+        openModal({
+            title:
+                state.editingId
+                    ? 'แก้ไข' + title
+                    : 'เพิ่ม' + title,
+            fields: fields,
+            submitLabel:
+                'บันทึกข้อมูล',
+            size:
+                'modal-large',
+            onSubmit:
+                async function (
+                    values
+                ) {
+                    values.id =
+                        state.editingId ||
+                        row.id ||
+                        '';
+
+                    const action =
+                        values.id
+                            ? 'update'
+                            : 'create';
+
+                    await apiRequest(
+                        action,
+                        {
+                            entity: entity,
+                            sheet:
+                                'Customers',
+                            partyType:
+                                entity,
+                            data: values,
+                            id: values.id
+                        }
+                    );
+
+                    showToast(
+                        'บันทึกข้อมูลสำเร็จ',
+                        'success'
+                    );
+
+                    await loadBootstrap();
+
+                    await loadEntityRows(
+                        entity,
+                        1
+                    );
+                }
+        });
+    }
+
+    function openUserModal(data) {
+        if (!isAdmin()) {
+            showToast(
+                'เฉพาะผู้ดูแลระบบเท่านั้น',
+                'warning'
+            );
+
+            return;
+        }
+
+        const row =
+            data || {};
+
+        const isEdit =
+            !!(
+                state.editingId ||
+                row.id
+            );
+
+        const fields = [
+            {
+                name: 'username',
+                label: 'ชื่อผู้ใช้',
+                type: 'text',
+                value:
+                    row.username ||
+                    '',
+                required: true,
+                readonly:
+                    isEdit
+            },
+            {
+                name: 'password',
+                label:
+                    isEdit
+                        ? 'รหัสผ่านใหม่'
+                        : 'รหัสผ่าน',
+                type: 'password',
+                value: '',
+                required:
+                    !isEdit,
+                placeholder:
+                    isEdit
+                        ? 'เว้นว่างหากไม่ต้องการเปลี่ยน'
+                        : ''
+            },
+            {
+                name: 'fullName',
+                label: 'ชื่อ-นามสกุล',
+                type: 'text',
+                value:
+                    row.fullName ||
+                    ''
+            },
+            {
+                name: 'role',
+                label: 'สิทธิ์',
+                type: 'select',
+                value:
+                    row.role ||
+                    'user',
+                options: [
+                    {
+                        value: 'admin',
+                        label: 'ผู้ดูแลระบบ'
+                    },
+                    {
+                        value: 'staff',
+                        label: 'เจ้าหน้าที่'
+                    },
+                    {
+                        value: 'user',
+                        label: 'ผู้ใช้งาน'
+                    }
+                ],
+                required: true
+            },
+            {
+                name: 'active',
+                label: 'สถานะ',
+                type: 'checkbox',
+                value:
+                    row.active !== undefined
+                        ? row.active
+                        : true,
+                checkboxLabel:
+                    'เปิดใช้งานผู้ใช้งาน'
+            }
+        ];
+
+        openModal({
+            title:
+                isEdit
+                    ? 'แก้ไขผู้ใช้งาน'
+                    : 'เพิ่มผู้ใช้งาน',
+            fields: fields,
+            submitLabel:
+                'บันทึกผู้ใช้งาน',
+            onSubmit:
+                async function (
+                    values
+                ) {
+                    values.id =
+                        state.editingId ||
+                        row.id ||
+                        '';
+
+                    if (
+                        isEdit &&
+                        !values.password
+                    ) {
+                        delete values.password;
+                    }
+
+                    const action =
+                        values.id
+                            ? 'update'
+                            : 'create';
+
+                    await apiRequest(
+                        action,
+                        {
+                            entity: 'users',
+                            sheet: 'Users',
+                            data: values,
+                            id: values.id
+                        }
+                    );
+
+                    showToast(
+                        'บันทึกผู้ใช้งานสำเร็จ',
+                        'success'
+                    );
+
+                    await loadBootstrap();
+
+                    await loadEntityRows(
+                        'users',
+                        1
+                    );
+                }
+        });
+    }
+
+    async function openDocumentModal(data) {
+        const row =
+            data || {};
+
+        let detail =
+            row;
+
+        if (
+            state.editingId &&
+            !row.items
+        ) {
+            try {
+                const response =
+                    await apiRequest(
+                        'getDocumentWithItems',
+                        {
+                            id:
+                                state.editingId
+                        }
+                    );
+
+                detail =
+                    unwrapResponse(
+                        response
+                    ) ||
+                    row;
+            } catch (error) {
+                console.warn(
+                    'Document detail error:',
+                    error
+                );
+            }
+        }
+
+        const partyOptions = [];
+
+        state.customers.forEach(
+            function (customer) {
+                partyOptions.push({
+                    value:
+                        customer.id ||
+                        customer.code ||
+                        '',
+                    label:
+                        'ลูกค้า: ' +
+                        (
+                            customer.name ||
+                            ''
+                        )
+                });
+            }
+        );
+
+        state.vendors.forEach(
+            function (vendor) {
+                partyOptions.push({
+                    value:
+                        vendor.id ||
+                        vendor.code ||
+                        '',
+                    label:
+                        'ผู้จำหน่าย: ' +
+                        (
+                            vendor.name ||
+                            ''
+                        )
+                });
+            }
+        );
+
+        const fields = [
+            {
+                name: 'docType',
+                label: 'ประเภทเอกสาร',
+                type: 'select',
+                value:
+                    detail.docType ||
+                    detail.documentType ||
+                    '',
+                optionsHtml:
+                    '<option value="">-- เลือกประเภทเอกสาร --</option>' +
+                    createDocumentTypeOptions(
+                        detail.docType ||
+                        detail.documentType ||
+                        ''
+                    ),
+                required: true
+            },
+            {
+                name: 'date',
+                label: 'วันที่',
+                type: 'date',
+                value:
+                    toInputDate(
+                        detail.date
+                    ),
+                required: true
+            },
+            {
+                name: 'dueDate',
+                label: 'วันครบกำหนด',
+                type: 'date',
+                value:
+                    toInputDate(
+                        detail.dueDate
+                    )
+            },
+            {
+                name: 'docNo',
+                label: 'เลขที่เอกสาร',
+                type: 'text',
+                value:
+                    detail.docNo ||
+                    detail.documentNo ||
+                    '',
+                placeholder:
+                    'เว้นว่างเพื่อให้ระบบออกเลขที่'
+            },
+            {
+                name: 'partyId',
+                label: 'ลูกค้า / ผู้จำหน่าย',
+                type: 'select',
+                value:
+                    detail.customerId ||
+                    detail.vendorId ||
+                    detail.partyId ||
+                    '',
+                options:
+                    partyOptions
+            },
+            {
+                name: 'partyName',
+                label: 'ชื่อคู่ค้า',
+                type: 'text',
+                value:
+                    detail.partyName ||
+                    detail.customerName ||
+                    detail.vendorName ||
+                    ''
+            },
+            {
+                name: 'taxId',
+                label: 'เลขประจำตัวผู้เสียภาษี',
+                type: 'text',
+                value:
+                    detail.taxId ||
+                    ''
+            },
+            {
+                name: 'address',
+                label: 'ที่อยู่',
+                type: 'textarea',
+                value:
+                    detail.address ||
+                    ''
+            },
+            {
+                name: 'phone',
+                label: 'โทรศัพท์',
+                type: 'text',
+                value:
+                    detail.phone ||
+                    ''
+            },
+            {
+                name: 'subject',
+                label: 'เรื่อง / รายละเอียด',
+                type: 'text',
+                value:
+                    detail.subject ||
+                    detail.description ||
+                    ''
+            },
+            {
+                name: 'discount',
+                label: 'ส่วนลด',
+                type: 'number',
+                value:
+                    detail.discount ||
+                    0,
+                min: '0',
+                step: '0.01'
+            },
+            {
+                name: 'taxRate',
+                label: 'ภาษีมูลค่าเพิ่ม (%)',
+                type: 'number',
+                value:
+                    detail.taxRate !== undefined
+                        ? detail.taxRate
+                        : 7,
+                min: '0',
+                step: '0.01'
+            },
+            {
+                name: 'notes',
+                label: 'หมายเหตุ',
+                type: 'textarea',
+                value:
+                    detail.notes ||
+                    ''
+            }
+        ];
+
+        openModal({
+            title:
+                state.editingId
+                    ? 'แก้ไขเอกสาร'
+                    : 'สร้างเอกสาร',
+            subtitle:
+                'กรอกข้อมูลเอกสารและรายการสินค้า',
+            fields: fields,
+            submitLabel:
+                'บันทึกเอกสาร',
+            size:
+                'modal-xlarge',
+            afterOpen:
+                function (container) {
+                    appendDocumentItemsEditor(
+                        container,
+                        detail.items ||
+                        detail.documentItems ||
+                        []
+                    );
+                },
+            onSubmit:
+                async function (
+                    values
+                ) {
+                    const items =
+                        collectDocumentItems();
+
+                    if (!items.length) {
+                        throw new Error(
+                            'กรุณาเพิ่มรายการในเอกสารอย่างน้อย 1 รายการ'
+                        );
+                    }
+
+                    const calculated =
+                        calculateDocumentTotals(
+                            items,
+                            values.discount,
+                            values.taxRate
+                        );
+
+                    const documentData =
+                        Object.assign(
+                            {},
+                            values,
+                            {
+                                id:
+                                    state.editingId ||
+                                    detail.id ||
+                                    '',
+                                subtotal:
+                                    calculated.subtotal,
+                                discount:
+                                    calculated.discount,
+                                taxAmount:
+                                    calculated.taxAmount,
+                                total:
+                                    calculated.total,
+                                grandTotal:
+                                    calculated.total
+                            }
+                        );
+
+                    await apiRequest(
+                        'savedocument',
+                        {
+                            data:
+                                documentData,
+                            items:
+                                items
+                        }
+                    );
+
+                    showToast(
+                        'บันทึกเอกสารสำเร็จ',
+                        'success'
+                    );
+
+                    await loadEntityRows(
+                        'documents',
+                        1
+                    );
+                }
+        });
+    }
+
+    function appendDocumentItemsEditor(
+        container,
+        existingItems
+    ) {
+        const form =
+            container.querySelector(
+                '#dynamicModalForm'
+            );
+
+        if (!form) {
+            return;
+        }
+
+        state.currentDocumentItems =
+            normalizeArray(
+                existingItems
+            ).map(
+                function (item) {
+                    return Object.assign(
+                        {},
+                        item
+                    );
+                }
+            );
+
+        const body =
+            form.querySelector(
+                '.modal-body'
+            );
+
+        if (!body) {
+            return;
+        }
+
+        const wrapper =
+            document.createElement(
+                'div'
+            );
+
+        wrapper.className =
+            'document-items-editor';
+
+        wrapper.innerHTML =
+            '<div class="document-items-header">' +
+            '<div>' +
+            '<h3>รายการในเอกสาร</h3>' +
+            '<p>เพิ่มสินค้า บริการ หรือรายการที่เกี่ยวข้อง</p>' +
+            '</div>' +
+            '<button type="button" class="btn btn-secondary" data-action="add-document-item">＋ เพิ่มรายการ</button>' +
+            '</div>' +
+            '<div id="documentItemsRows"></div>' +
+            '<div id="documentTotals" class="document-totals"></div>';
+
+        body.appendChild(
+            wrapper
+        );
+
+        renderDocumentItemsRows();
+    }
+
+    function renderDocumentItemsRows() {
+        const container =
+            byId(
+                'documentItemsRows'
+            );
+
+        if (!container) {
+            return;
+        }
+
+        let html = '';
+
+        state.currentDocumentItems.forEach(
+            function (item, index) {
+                html +=
+                    '<div class="document-item-row" data-item-index="' +
+                    index +
+                    '">' +
+                    '<div class="form-group">' +
+                    '<label>รายการ</label>' +
+                    '<input type="text" data-item-field="description" value="' +
+                    escapeHtml(
+                        item.description ||
+                        item.name ||
+                        ''
+                    ) +
+                    '">' +
+                    '</div>' +
+                    '<div class="form-group">' +
+                    '<label>จำนวน</label>' +
+                    '<input type="number" data-item-field="quantity" value="' +
+                    escapeHtml(
+                        item.quantity !== undefined
+                            ? item.quantity
+                            : 1
+                    ) +
+                    '" min="0" step="0.01">' +
+                    '</div>' +
+                    '<div class="form-group">' +
+                    '<label>หน่วย</label>' +
+                    '<input type="text" data-item-field="unit" value="' +
+                    escapeHtml(
+                        item.unit ||
+                        ''
+                    ) +
+                    '">' +
+                    '</div>' +
+                    '<div class="form-group">' +
+                    '<label>ราคาต่อหน่วย</label>' +
+                    '<input type="number" data-item-field="unitPrice" value="' +
+                    escapeHtml(
+                        item.unitPrice !== undefined
+                            ? item.unitPrice
+                            : 0
+                    ) +
+                    '" min="0" step="0.01">' +
+                    '</div>' +
+                    '<div class="form-group">' +
+                    '<label>รวม</label>' +
+                    '<input type="text" class="item-line-total" value="' +
+                    escapeHtml(
+                        formatMoney(
+                            parseNumber(
+                                item.quantity
+                            ) *
+                            parseNumber(
+                                item.unitPrice
+                            )
+                        )
+                    ) +
+                    '" readonly>' +
+                    '</div>' +
+                    '<div class="form-group item-remove">' +
+                    '<label>&nbsp;</label>' +
+                    '<button type="button" class="btn btn-danger" data-action="remove-document-item" data-index="' +
+                    index +
+                    '">ลบ</button>' +
+                    '</div>' +
+                    '</div>';
+            }
+        );
+
+        if (!html) {
+            html =
+                '<div class="empty-state compact">' +
+                'ยังไม่มีรายการ กด “เพิ่มรายการ” เพื่อเริ่มต้น' +
+                '</div>';
+        }
+
+        container.innerHTML =
+            html;
+
+        updateDocumentTotalsFromEditor();
+    }
+
+    function collectDocumentItems() {
+        const rows =
+            $$('.document-item-row');
+
+        const items = [];
+
+        rows.forEach(
+            function (row) {
+                const index =
+                    parseInt(
+                        row.getAttribute(
+                            'data-item-index'
+                        ),
+                        10
+                    );
+
+                const original =
+                    state.currentDocumentItems[
+                        index
+                    ] || {};
+
+                const description =
+                    getItemField(
+                        row,
+                        'description'
+                    );
+
+                const quantity =
+                    parseNumber(
+                        getItemField(
+                            row,
+                            'quantity'
+                        )
+                    );
+
+                const unit =
+                    getItemField(
+                        row,
+                        'unit'
+                    );
+
+                const unitPrice =
+                    parseNumber(
+                        getItemField(
+                            row,
+                            'unitPrice'
+                        )
+                    );
+
+                if (
+                    !description &&
+                    quantity === 0 &&
+                    unitPrice === 0
+                ) {
+                    return;
+                }
+
+                items.push(
+                    Object.assign(
+                        {},
+                        original,
+                        {
+                            id:
+                                original.id ||
+                                generateId(),
+                            description:
+                                description,
+                            quantity:
+                                quantity ||
+                                1,
+                            unit:
+                                unit,
+                            unitPrice:
+                                unitPrice,
+                            amount:
+                                (
+                                    quantity ||
+                                    1
+                                ) *
+                                unitPrice
+                        }
+                    )
+                );
+            }
+        );
+
+        return items;
+    }
+
+    function getItemField(row, field) {
+        const element =
+            row.querySelector(
+                '[data-item-field="' +
+                CSS.escape(field) +
+                '"]'
+            );
+
+        return element
+            ? element.value
+            : '';
+    }
+
+    function calculateDocumentTotals(
+        items,
+        discount,
+        taxRate
+    ) {
+        let subtotal = 0;
+
+        items.forEach(
+            function (item) {
+                const quantity =
+                    parseNumber(
+                        item.quantity
+                    ) || 1;
+
+                const unitPrice =
+                    parseNumber(
+                        item.unitPrice
+                    );
+
+                subtotal +=
+                    quantity *
+                    unitPrice;
+            }
+        );
+
+        const discountAmount =
+            Math.max(
+                0,
+                parseNumber(
+                    discount
+                )
+            );
+
+        const afterDiscount =
+            Math.max(
+                0,
+                subtotal -
+                discountAmount
+            );
+
+        const rate =
+            Math.max(
+                0,
+                parseNumber(
+                    taxRate
+                )
+            );
+
+        const taxAmount =
+            afterDiscount *
+            rate /
+            100;
+
+        const total =
+            afterDiscount +
+            taxAmount;
+
+        return {
+            subtotal:
+                subtotal,
+            discount:
+                discountAmount,
+            afterDiscount:
+                afterDiscount,
+            taxAmount:
+                taxAmount,
+            total:
+                total
+        };
+    }
+
+    function updateDocumentTotalsFromEditor() {
+        const items =
+            collectDocumentItems();
+
+        const discountElement =
+            byId(
+                'field-discount'
+            );
+
+        const taxElement =
+            byId(
+                'field-taxRate'
+            );
+
+        const discount =
+            discountElement
+                ? parseNumber(
+                    discountElement.value
+                )
+                : 0;
+
+        const taxRate =
+            taxElement
+                ? parseNumber(
+                    taxElement.value
+                )
+                : 7;
+
+        const totals =
+            calculateDocumentTotals(
+                items,
+                discount,
+                taxRate
+            );
+
+        const container =
+            byId(
+                'documentTotals'
+            );
+
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML =
+            '<div class="total-row">' +
+            '<span>รวมก่อนส่วนลด</span>' +
+            '<strong>' +
+            escapeHtml(
+                formatMoney(
+                    totals.subtotal
+                )
+            ) +
+            ' บาท</strong>' +
+            '</div>' +
+            '<div class="total-row">' +
+            '<span>ส่วนลด</span>' +
+            '<strong>' +
+            escapeHtml(
+                formatMoney(
+                    totals.discount
+                )
+            ) +
+            ' บาท</strong>' +
+            '</div>' +
+            '<div class="total-row">' +
+            '<span>ภาษี ' +
+            escapeHtml(
+                formatNumber(
+                    taxRate
+                )
+            ) +
+            '%</span>' +
+            '<strong>' +
+            escapeHtml(
+                formatMoney(
+                    totals.taxAmount
+                )
+            ) +
+            ' บาท</strong>' +
+            '</div>' +
+            '<div class="total-row grand-total">' +
+            '<span>ยอดรวมสุทธิ</span>' +
+            '<strong>' +
+            escapeHtml(
+                formatMoney(
+                    totals.total
+                )
+            ) +
+            ' บาท</strong>' +
+            '</div>';
+    }
+
+    function addDocumentItem() {
+        state.currentDocumentItems.push(
+            {
+                id:
+                    generateId(),
+                description:
+                    '',
+                quantity:
+                    1,
+                unit:
+                    '',
+                unitPrice:
+                    0,
+                amount:
+                    0
+            }
+        );
+
+        renderDocumentItemsRows();
+    }
+
+    function removeDocumentItem(index) {
+        const numericIndex =
+            parseInt(
+                index,
+                10
+            );
+
+        if (
+            Number.isNaN(
+                numericIndex
+            )
+        ) {
+            return;
+        }
+
+        state.currentDocumentItems.splice(
+            numericIndex,
+            1
+        );
+
+        renderDocumentItemsRows();
+    }
+
+    function updateDocumentItemInput(
+        element
+    ) {
+        const row =
+            element.closest(
+                '.document-item-row'
+            );
+
+        if (!row) {
+            return;
+        }
+
+        const index =
+            parseInt(
+                row.getAttribute(
+                    'data-item-index'
+                ),
+                10
+            );
+
+        if (
+            Number.isNaN(
+                index
+            )
+        ) {
+            return;
+        }
+
+        const item =
+            state.currentDocumentItems[
+                index
+            ] || {};
+
+        const field =
+            element.getAttribute(
+                'data-item-field'
+            );
+
+        if (!field) {
+            return;
+        }
+
+        if (
+            field === 'quantity' ||
+            field === 'unitPrice'
+        ) {
+            item[field] =
+                parseNumber(
+                    element.value
+                );
+        } else {
+            item[field] =
+                element.value;
+        }
+
+        item.amount =
+            (
+                parseNumber(
+                    item.quantity
+                ) || 1
+            ) *
+            parseNumber(
+                item.unitPrice
+            );
+
+        const totalElement =
+            row.querySelector(
+                '.item-line-total'
+            );
+
+        if (totalElement) {
+            totalElement.value =
+                formatMoney(
+                    item.amount
+                );
+        }
+
+        updateDocumentTotalsFromEditor();
+    }
+
+    async function viewDocument(id) {
+        try {
+            setLoading(
+                true,
+                'กำลังโหลดเอกสาร...'
+            );
+
+            const response =
+                await apiRequest(
+                    'getDocumentWithItems',
                     {
                         id: id
                     }
                 );
 
-            item =
-                result.data &&
-                result.data.document
-                    ? result.data.document
-                    : null;
+            const data =
+                unwrapResponse(
+                    response
+                );
+
+            openDocumentViewModal(
+                data
+            );
         } catch (error) {
-            handleApiError(error);
-            hideLoading();
-            return;
+            showToast(
+                error.message ||
+                'ไม่สามารถโหลดเอกสารได้',
+                'error'
+            );
         } finally {
-            hideLoading();
+            setLoading(false);
         }
     }
 
-    const isEdit =
-        Boolean(item);
+    function openDocumentViewModal(data) {
+        const row =
+            data || {};
 
-    AppState.documentItems =
-        item &&
-        Array.isArray(
-            item.items
-        )
-            ? item.items.map(
-                function (row) {
-                    return Object.assign(
-                        {},
-                        row
-                    );
-                }
-            )
-            : [];
-
-    if (
-        !AppState.documentItems.length
-    ) {
-        AppState.documentItems = [
-            createDocumentItem()
-        ];
-    }
-
-    const form =
-        item
-            ? Object.assign(
-                {},
-                AppState.documentForm,
-                item
-            )
-            : Object.assign(
-                {},
-                AppState.documentForm,
-                {
-                    date:
-                        getTodayString(),
-                    docType:
-                        "QUOTATION",
-                    status:
-                        "DRAFT"
-                }
+        const items =
+            normalizeArray(
+                row.items ||
+                row.documentItems
             );
 
-    const content = `
-        <form id="documentForm">
+        let itemHtml =
+            '<table class="data-table">' +
+            '<thead>' +
+            '<tr>' +
+            '<th>รายการ</th>' +
+            '<th>จำนวน</th>' +
+            '<th>หน่วย</th>' +
+            '<th class="text-right">ราคา/หน่วย</th>' +
+            '<th class="text-right">รวม</th>' +
+            '</tr>' +
+            '</thead><tbody>';
 
-            <input
-                type="hidden"
-                id="documentId"
-                value="${escapeAttribute(
-                    form.id ||
-                    ""
-                )}"
-            >
-
-            <div class="form-row-3">
-
-                <div class="form-group">
-
-                    <label class="form-label required">
-                        ประเภทเอกสาร
-                    </label>
-
-                    <select
-                        class="form-control"
-                        id="documentDocType"
-                        required
-                    >
-
-                        ${renderDocumentTypeOptions(
-                            form.docType ||
-                            "QUOTATION"
-                        )}
-
-                    </select>
-
-                </div>
-
-                <div class="form-group">
-
-                    <label class="form-label required">
-                        วันที่
-                    </label>
-
-                    <input
-                        type="date"
-                        class="form-control"
-                        id="documentDate"
-                        required
-                        value="${escapeAttribute(
-                            formatDateInput(
-                                form.date
+        items.forEach(
+            function (item) {
+                itemHtml +=
+                    '<tr>' +
+                    '<td>' +
+                    escapeHtml(
+                        item.description ||
+                        item.name ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        formatNumber(
+                            item.quantity
+                        )
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        item.unit ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td class="text-right">' +
+                    escapeHtml(
+                        formatMoney(
+                            item.unitPrice
+                        )
+                    ) +
+                    '</td>' +
+                    '<td class="text-right">' +
+                    escapeHtml(
+                        formatMoney(
+                            item.amount ||
+                            (
+                                parseNumber(
+                                    item.quantity
+                                ) *
+                                parseNumber(
+                                    item.unitPrice
+                                )
                             )
-                        )}"
-                    >
-
-                </div>
-
-                <div class="form-group">
-
-                    <label class="form-label">
-                        เลขที่เอกสาร
-                    </label>
-
-                    <input
-                        type="text"
-                        class="form-control"
-                        id="documentDocNo"
-                        value="${escapeAttribute(
-                            form.docNo ||
-                            ""
-                        )}"
-                        placeholder="ระบบสร้างอัตโนมัติ"
-                    >
-
-                </div>
-
-            </div>
-
-            <div class="form-row-3">
-
-                <div class="form-group">
-
-                    <label class="form-label">
-                        ลูกค้า
-                    </label>
-
-                    <select
-                        class="form-control"
-                        id="documentCustomerId"
-                    >
-
-                        <option value="">
-                            เลือกลูกค้า
-                        </option>
-
-                        ${renderCustomerOptions(
-                            form.customerId ||
-                            ""
-                        )}
-
-                    </select>
-
-                </div>
-
-                <div class="form-group">
-
-                    <label class="form-label">
-                        ผู้จำหน่าย / เจ้าหนี้
-                    </label>
-
-                    <select
-                        class="form-control"
-                        id="documentVendorId"
-                    >
-
-                        <option value="">
-                            เลือกผู้จำหน่าย
-                        </option>
-
-                        ${renderVendorOptions(
-                            form.vendorId ||
-                            ""
-                        )}
-
-                    </select>
-
-                </div>
-
-                <div class="form-group">
-
-                    <label class="form-label">
-                        วันครบกำหนด
-                    </label>
-
-                    <input
-                        type="date"
-                        class="form-control"
-                        id="documentDueDate"
-                        value="${escapeAttribute(
-                            formatDateInput(
-                                form.dueDate
-                            )
-                        )}"
-                    >
-
-                </div>
-
-            </div>
-
-            <div class="form-group">
-
-                <label class="form-label">
-                    ชื่อผู้ติดต่อ
-                </label>
-
-                <input
-                    type="text"
-                    class="form-control"
-                    id="documentPartyName"
-                    value="${escapeAttribute(
-                        form.partyName ||
-                        ""
-                    )}"
-                    placeholder="กรณีไม่ได้เลือกจากทะเบียน"
-                >
-
-            </div>
-
-            <div class="form-row">
-
-                <div class="form-group">
-
-                    <label class="form-label">
-                        เลขประจำตัวผู้เสียภาษี
-                    </label>
-
-                    <input
-                        type="text"
-                        class="form-control"
-                        id="documentTaxId"
-                        value="${escapeAttribute(
-                            form.taxId ||
-                            ""
-                        )}"
-                    >
-
-                </div>
-
-                <div class="form-group">
-
-                    <label class="form-label">
-                        โทรศัพท์
-                    </label>
-
-                    <input
-                        type="text"
-                        class="form-control"
-                        id="documentPhone"
-                        value="${escapeAttribute(
-                            form.phone ||
-                            ""
-                        )}"
-                    >
-
-                </div>
-
-            </div>
-
-            <div class="form-group">
-
-                <label class="form-label">
-                    ที่อยู่
-                </label>
-
-                <textarea
-                    class="form-control"
-                    id="documentAddress"
-                >${escapeHTML(
-                    form.address ||
-                    ""
-                )}</textarea>
-
-            </div>
-
-            <div class="form-group">
-
-                <label class="form-label">
-                    หัวข้อ
-                </label>
-
-                <input
-                    type="text"
-                    class="form-control"
-                    id="documentSubject"
-                    value="${escapeAttribute(
-                        form.subject ||
-                        ""
-                    )}"
-                    placeholder="หัวข้อเอกสาร"
-                >
-
-            </div>
-
-            <div class="card mt-3">
-
-                <div class="card-header">
-
-                    <div class="card-title">
-                        รายการสินค้า / บริการ
-                    </div>
-
-                    <button
-                        type="button"
-                        class="btn btn-sm btn-primary"
-                        data-action="add-document-item"
-                    >
-                        ＋ เพิ่มรายการ
-                    </button>
-
-                </div>
-
-                <div class="card-body">
-
-                    <div class="table-wrapper">
-
-                        <table class="data-table document-item-table">
-
-                            <thead>
-
-                                <tr>
-
-                                    <th>
-                                        รายละเอียด
-                                    </th>
-
-                                    <th>
-                                        จำนวน
-                                    </th>
-
-                                    <th>
-                                        หน่วย
-                                    </th>
-
-                                    <th>
-                                        ราคาต่อหน่วย
-                                    </th>
-
-                                    <th>
-                                        ส่วนลด
-                                    </th>
-
-                                    <th>
-                                        รวม
-                                    </th>
-
-                                    <th>
-                                        ลบ
-                                    </th>
-
-                                </tr>
-
-                            </thead>
-
-                            <tbody id="documentItemsBody">
-
-                            </tbody>
-
-                        </table>
-
-                    </div>
-
-                </div>
-
-            </div>
-
-            <div class="document-summary">
-
-                <div class="summary-row">
-
-                    <span>
-                        รวมก่อนส่วนลด
-                    </span>
-
-                    <strong id="documentSubtotalDisplay">
-                        ${formatMoney(
-                            form.subtotal ||
-                            0
-                        )}
-                    </strong>
-
-                </div>
-
-                <div class="summary-row">
-
-                    <span>
-                        ส่วนลด
-                    </span>
-
-                    <div style="width:160px;">
-                        <input
-                            type="number"
-                            class="form-control currency-input"
-                            id="documentDiscount"
-                            min="0"
-                            step="0.01"
-                            value="${escapeAttribute(
-                                form.discount ||
-                                0
-                            )}"
-                        >
-                    </div>
-
-                </div>
-
-                <div class="summary-row">
-
-                    <span>
-                        VAT %
-                    </span>
-
-                    <div style="width:160px;">
-                        <input
-                            type="number"
-                            class="form-control currency-input"
-                            id="documentTaxRate"
-                            min="0"
-                            step="0.01"
-                            value="${escapeAttribute(
-                                form.taxRate ||
-                                0
-                            )}"
-                        >
-                    </div>
-
-                </div>
-
-                <div class="summary-row">
-
-                    <span>
-                        ภาษี
-                    </span>
-
-                    <strong id="documentTaxAmountDisplay">
-                        ${formatMoney(
-                            form.taxAmount ||
-                            0
-                        )}
-                    </strong>
-
-                </div>
-
-                <div class="summary-row total">
-
-                    <span>
-                        รวมทั้งสิ้น
-                    </span>
-
-                    <strong id="documentTotalDisplay">
-                        ${formatMoney(
-                            form.total ||
-                            0
-                        )}
-                    </strong>
-
-                </div>
-
-            </div>
-
-            <div class="form-group mt-3">
-
-                <label class="form-label">
-                    หมายเหตุ
-                </label>
-
-                <textarea
-                    class="form-control"
-                    id="documentNotes"
-                >${escapeHTML(
-                    form.notes ||
-                    ""
-                )}</textarea>
-
-            </div>
-
-        </form>
-    `;
-
-    const footer = `
-        <button
-            type="button"
-            class="btn btn-outline-secondary"
-            data-action="close-modal"
-        >
-            ยกเลิก
-        </button>
-
-        <button
-            type="button"
-            class="btn btn-primary"
-            data-action="save-document"
-        >
-            ${isEdit ? "บันทึกการแก้ไข" : "บันทึกเอกสาร"}
-        </button>
-    `;
-
-    openModal({
-        title:
-            isEdit
-                ? "แก้ไขเอกสาร"
-                : "สร้างเอกสาร",
-        content: content,
-        footer: footer,
-        size: "modal-xl"
-    });
-
-    renderDocumentItems();
-
-    calculateDocumentTotals();
-
-    bindDocumentPartyEvents();
-}
-
-function createDocumentItem() {
-    return {
-        id: "",
-        documentId: "",
-        lineNo:
-            AppState.documentItems.length + 1,
-        description: "",
-        qty: 1,
-        unit: "รายการ",
-        unitPrice: 0,
-        discount: 0,
-        amount: 0
-    };
-}
-
-function renderDocumentItems() {
-    const body =
-        byId(
-            "documentItemsBody"
+                        )
+                    ) +
+                    '</td>' +
+                    '</tr>';
+            }
         );
 
-    if (!body) {
-        return;
-    }
+        itemHtml +=
+            '</tbody></table>';
 
-    setHTML(
-        body,
-        AppState.documentItems
-            .map(function (item, index) {
-                const amount =
-                    calculateDocumentItemAmount(
-                        item
-                    );
-
-                return `
-                    <tr>
-
-                        <td>
-                            <input
-                                type="text"
-                                class="form-control"
-                                data-document-item-field="description"
-                                data-index="${index}"
-                                value="${escapeAttribute(
-                                    item.description ||
-                                    ""
-                                )}"
-                                placeholder="รายละเอียด"
-                            >
-                        </td>
-
-                        <td>
-                            <input
-                                type="number"
-                                class="form-control number-input"
-                                data-document-item-field="qty"
-                                data-index="${index}"
-                                min="0"
-                                step="0.01"
-                                value="${escapeAttribute(
-                                    item.qty ||
-                                    0
-                                )}"
-                            >
-                        </td>
-
-                        <td>
-                            <input
-                                type="text"
-                                class="form-control"
-                                data-document-item-field="unit"
-                                data-index="${index}"
-                                value="${escapeAttribute(
-                                    item.unit ||
-                                    ""
-                                )}"
-                            >
-                        </td>
-
-                        <td>
-                            <input
-                                type="number"
-                                class="form-control currency-input"
-                                data-document-item-field="unitPrice"
-                                data-index="${index}"
-                                min="0"
-                                step="0.01"
-                                value="${escapeAttribute(
-                                    item.unitPrice ||
-                                    0
-                                )}"
-                            >
-                        </td>
-
-                        <td>
-                            <input
-                                type="number"
-                                class="form-control currency-input"
-                                data-document-item-field="discount"
-                                data-index="${index}"
-                                min="0"
-                                step="0.01"
-                                value="${escapeAttribute(
-                                    item.discount ||
-                                    0
-                                )}"
-                            >
-                        </td>
-
-                        <td class="text-right">
-                            <strong>
-                                ${formatMoney(
-                                    amount
-                                )}
-                            </strong>
-                        </td>
-
-                        <td class="text-center">
-
-                            <button
-                                type="button"
-                                class="btn btn-sm btn-outline-danger"
-                                data-action="remove-document-item"
-                                data-index="${index}"
-                            >
-                                ×
-                            </button>
-
-                        </td>
-
-                    </tr>
-                `;
-            })
-            .join("")
-    );
-
-    $$(
-        "[data-document-item-field]",
-        body
-    ).forEach(
-        function (input) {
-            input.addEventListener(
-                "input",
-                function () {
-                    const index =
-                        Number(
-                            input.getAttribute(
-                                "data-index"
-                            )
+        openModal({
+            title:
+                getDocumentTypeName(
+                    row.docType ||
+                    row.documentType
+                ) +
+                ' ' +
+                (
+                    row.docNo ||
+                    row.documentNo ||
+                    ''
+                ),
+            subtitle:
+                'รายละเอียดเอกสาร',
+            fields: [
+                {
+                    name: 'view',
+                    label: 'ข้อมูล',
+                    type: 'textarea',
+                    value:
+                        '',
+                    readonly: true,
+                    help:
+                        'ดูรายละเอียดเพิ่มเติมจากรายการด้านล่าง'
+                }
+            ],
+            submitLabel:
+                'ปิด',
+            afterOpen:
+                function (container) {
+                    const body =
+                        container.querySelector(
+                            '.modal-body'
                         );
 
-                    const field =
-                        input.getAttribute(
-                            "data-document-item-field"
-                        );
-
-                    if (
-                        !AppState.documentItems[
-                            index
-                        ]
-                    ) {
+                    if (!body) {
                         return;
                     }
 
-                    let value =
-                        input.value;
-
-                    if (
-                        field === "qty" ||
-                        field === "unitPrice" ||
-                        field === "discount"
-                    ) {
-                        value =
-                            toNumber(value);
-                    }
-
-                    AppState.documentItems[
-                        index
-                    ][field] = value;
-
-                    renderDocumentItems();
-
-                    calculateDocumentTotals();
+                    body.innerHTML =
+                        '<div class="document-preview">' +
+                        '<div class="document-meta-grid">' +
+                        '<div><span>ประเภท</span><strong>' +
+                        escapeHtml(
+                            getDocumentTypeName(
+                                row.docType ||
+                                row.documentType
+                            )
+                        ) +
+                        '</strong></div>' +
+                        '<div><span>เลขที่</span><strong>' +
+                        escapeHtml(
+                            row.docNo ||
+                            row.documentNo ||
+                            '-'
+                        ) +
+                        '</strong></div>' +
+                        '<div><span>วันที่</span><strong>' +
+                        escapeHtml(
+                            formatDate(
+                                row.date
+                            )
+                        ) +
+                        '</strong></div>' +
+                        '<div><span>ครบกำหนด</span><strong>' +
+                        escapeHtml(
+                            formatDate(
+                                row.dueDate
+                            )
+                        ) +
+                        '</strong></div>' +
+                        '<div><span>คู่ค้า</span><strong>' +
+                        escapeHtml(
+                            row.partyName ||
+                            row.customerName ||
+                            row.vendorName ||
+                            '-'
+                        ) +
+                        '</strong></div>' +
+                        '<div><span>เลขภาษี</span><strong>' +
+                        escapeHtml(
+                            row.taxId ||
+                            '-'
+                        ) +
+                        '</strong></div>' +
+                        '</div>' +
+                        '<div class="document-items-preview">' +
+                        itemHtml +
+                        '</div>' +
+                        '<div class="document-total-preview">' +
+                        '<div><span>รวมก่อนส่วนลด</span><strong>' +
+                        escapeHtml(
+                            formatMoney(
+                                row.subtotal
+                            )
+                        ) +
+                        ' บาท</strong></div>' +
+                        '<div><span>ส่วนลด</span><strong>' +
+                        escapeHtml(
+                            formatMoney(
+                                row.discount
+                            )
+                        ) +
+                        ' บาท</strong></div>' +
+                        '<div><span>ภาษี</span><strong>' +
+                        escapeHtml(
+                            formatMoney(
+                                row.taxAmount
+                            )
+                        ) +
+                        ' บาท</strong></div>' +
+                        '<div class="grand"><span>ยอดรวม</span><strong>' +
+                        escapeHtml(
+                            formatMoney(
+                                row.total ||
+                                row.grandTotal
+                            )
+                        ) +
+                        ' บาท</strong></div>' +
+                        '</div>' +
+                        '</div>';
+                },
+            onSubmit:
+                async function () {
+                    closeModal();
                 }
+        });
+
+        const submitButton =
+            byId(
+                'modalSubmitButton'
             );
+
+        if (submitButton) {
+            submitButton.textContent =
+                'ปิด';
         }
-    );
-}
-
-function calculateDocumentItemAmount(item) {
-    const qty =
-        toNumber(
-            item.qty
-        );
-
-    const unitPrice =
-        toNumber(
-            item.unitPrice
-        );
-
-    const discount =
-        toNumber(
-            item.discount
-        );
-
-    return Math.max(
-        0,
-        qty * unitPrice - discount
-    );
-}
-
-function calculateDocumentTotals() {
-    const subtotal =
-        AppState.documentItems.reduce(
-            function (sum, item) {
-                return (
-                    sum +
-                    calculateDocumentItemAmount(
-                        item
-                    )
-                );
-            },
-            0
-        );
-
-    const discount =
-        toNumber(
-            valueOf(
-                "documentDiscount"
-            )
-        );
-
-    const taxRate =
-        toNumber(
-            valueOf(
-                "documentTaxRate"
-            )
-        );
-
-    const taxable =
-        Math.max(
-            0,
-            subtotal - discount
-        );
-
-    const taxAmount =
-        taxable *
-        (taxRate / 100);
-
-    const total =
-        taxable +
-        taxAmount;
-
-    setText(
-        byId(
-            "documentSubtotalDisplay"
-        ),
-        formatMoney(
-            subtotal
-        )
-    );
-
-    setText(
-        byId(
-            "documentTaxAmountDisplay"
-        ),
-        formatMoney(
-            taxAmount
-        )
-    );
-
-    setText(
-        byId(
-            "documentTotalDisplay"
-        ),
-        formatMoney(
-            total
-        )
-    );
-
-    return {
-        subtotal:
-            subtotal,
-        discount:
-            discount,
-        taxRate:
-            taxRate,
-        taxAmount:
-            taxAmount,
-        total:
-            total
-    };
-}
-
-function bindDocumentPartyEvents() {
-    const customer =
-        byId(
-            "documentCustomerId"
-        );
-
-    const vendor =
-        byId(
-            "documentVendorId"
-        );
-
-    if (customer) {
-        customer.addEventListener(
-            "change",
-            function () {
-                const item =
-                    getCustomerById(
-                        customer.value
-                    );
-
-                if (!item) {
-                    return;
-                }
-
-                setValue(
-                    "documentPartyName",
-                    item.name || ""
-                );
-
-                setValue(
-                    "documentTaxId",
-                    item.taxId || ""
-                );
-
-                setValue(
-                    "documentAddress",
-                    item.address || ""
-                );
-
-                setValue(
-                    "documentPhone",
-                    item.phone || ""
-                );
-            }
-        );
     }
 
-    if (vendor) {
-        vendor.addEventListener(
-            "change",
-            function () {
-                const item =
-                    getVendorById(
-                        vendor.value
-                    );
+    async function cancelDocument(id) {
+        const confirmed =
+            await confirmAction(
+                'ยืนยันยกเลิกเอกสารนี้หรือไม่?'
+            );
 
-                if (!item) {
-                    return;
-                }
+        if (!confirmed) {
+            return;
+        }
 
-                setValue(
-                    "documentPartyName",
-                    item.name || ""
-                );
+        try {
+            setLoading(
+                true,
+                'กำลังยกเลิกเอกสาร...'
+            );
 
-                setValue(
-                    "documentTaxId",
-                    item.taxId || ""
-                );
-
-                setValue(
-                    "documentAddress",
-                    item.address || ""
-                );
-
-                setValue(
-                    "documentPhone",
-                    item.phone || ""
-                );
-            }
-        );
-    }
-
-    const discount =
-        byId(
-            "documentDiscount"
-        );
-
-    const taxRate =
-        byId(
-            "documentTaxRate"
-        );
-
-    if (discount) {
-        discount.addEventListener(
-            "input",
-            calculateDocumentTotals
-        );
-    }
-
-    if (taxRate) {
-        taxRate.addEventListener(
-            "input",
-            calculateDocumentTotals
-        );
-    }
-}
-
-async function saveDocumentFromModal() {
-    const form =
-        byId(
-            "documentForm"
-        );
-
-    if (!form) {
-        return;
-    }
-
-    if (!form.checkValidity()) {
-        form.reportValidity();
-        return;
-    }
-
-    if (
-        !AppState.documentItems.length
-    ) {
-        showToast(
-            "ข้อมูลไม่ครบ",
-            "กรุณาเพิ่มรายการในเอกสารอย่างน้อย 1 รายการ",
-            "warning"
-        );
-
-        return;
-    }
-
-    const totals =
-        calculateDocumentTotals();
-
-    const data = {
-        id:
-            valueOf(
-                "documentId"
-            ),
-        docNo:
-            valueOf(
-                "documentDocNo"
-            ),
-        docType:
-            valueOf(
-                "documentDocType"
-            ),
-        date:
-            valueOf(
-                "documentDate"
-            ),
-        dueDate:
-            valueOf(
-                "documentDueDate"
-            ),
-        customerId:
-            valueOf(
-                "documentCustomerId"
-            ),
-        vendorId:
-            valueOf(
-                "documentVendorId"
-            ),
-        partyName:
-            valueOf(
-                "documentPartyName"
-            ),
-        taxId:
-            valueOf(
-                "documentTaxId"
-            ),
-        address:
-            valueOf(
-                "documentAddress"
-            ),
-        phone:
-            valueOf(
-                "documentPhone"
-            ),
-        subject:
-            valueOf(
-                "documentSubject"
-            ),
-        subtotal:
-            totals.subtotal,
-        discount:
-            totals.discount,
-        taxRate:
-            totals.taxRate,
-        taxAmount:
-            totals.taxAmount,
-        total:
-            totals.total,
-        notes:
-            valueOf(
-                "documentNotes"
-            ),
-        status:
-            "DRAFT",
-        items:
-            AppState.documentItems.map(
-                function (item, index) {
-                    return Object.assign(
-                        {},
-                        item,
-                        {
-                            lineNo:
-                                index + 1,
-                            amount:
-                                calculateDocumentItemAmount(
-                                    item
-                                )
-                        }
-                    );
-                }
-            )
-    };
-
-    showLoading(
-        "กำลังบันทึกเอกสาร..."
-    );
-
-    try {
-        await apiRequest(
-            "savedocument",
-            {
-                data:
-                    data
-            }
-        );
-
-        closeModal();
-
-        showToast(
-            "บันทึกสำเร็จ",
-            "บันทึกเอกสารเรียบร้อยแล้ว",
-            "success"
-        );
-
-        await navigateTo(
-            "documents"
-        );
-    } catch (error) {
-        handleApiError(error);
-    } finally {
-        hideLoading();
-    }
-}
-
-/* =========================================================
-   38. DOCUMENT VIEW
-   ========================================================= */
-
-async function viewDocument(id, printAfterLoad) {
-    showLoading(
-        "กำลังโหลดเอกสาร..."
-    );
-
-    try {
-        const result =
             await apiRequest(
-                "getDocumentWithItems",
+                'cancelDocument',
                 {
                     id: id
                 }
             );
 
-        const data =
-            result.data || {};
-
-        const document =
-            data.document ||
-            data;
-
-        const items =
-            data.items ||
-            document.items ||
-            [];
-
-        const content =
-            renderDocumentPreview(
-                document,
-                items
+            showToast(
+                'ยกเลิกเอกสารสำเร็จ',
+                'success'
             );
+
+            await loadEntityRows(
+                'documents',
+                state.currentPageNumber
+            );
+        } catch (error) {
+            showToast(
+                error.message ||
+                'ไม่สามารถยกเลิกเอกสารได้',
+                'error'
+            );
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    async function cancelTransaction(
+        entity,
+        id
+    ) {
+        const confirmed =
+            await confirmAction(
+                'ยืนยันยกเลิกรายการนี้หรือไม่?'
+            );
+
+        if (!confirmed) {
+            return;
+        }
+
+        let action = '';
+
+        if (entity === 'income') {
+            action =
+                'cancelIncome';
+        } else if (entity === 'expense') {
+            action =
+                'cancelExpense';
+        }
+
+        if (!action) {
+            await deleteEntity(
+                entity,
+                id
+            );
+
+            return;
+        }
+
+        try {
+            setLoading(
+                true,
+                'กำลังยกเลิกรายการ...'
+            );
+
+            await apiRequest(
+                action,
+                {
+                    id: id
+                }
+            );
+
+            showToast(
+                'ยกเลิกรายการสำเร็จ',
+                'success'
+            );
+
+            await loadEntityRows(
+                entity,
+                state.currentPageNumber
+            );
+        } catch (error) {
+            showToast(
+                error.message ||
+                'ไม่สามารถยกเลิกรายการได้',
+                'error'
+            );
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    async function renderReportsPage() {
+        const container =
+            getPageContainer(
+                'reports'
+            );
+
+        container.innerHTML =
+            '<section class="reports-page">' +
+            '<div class="page-toolbar">' +
+            '<div>' +
+            '<h2>รายงาน</h2>' +
+            '<p>สรุปข้อมูลทางการเงินตามช่วงเวลา</p>' +
+            '</div>' +
+            '</div>' +
+            '<div class="card filter-card">' +
+            '<div class="filter-grid">' +
+            '<div class="form-group">' +
+            '<label>ประเภทรายงาน</label>' +
+            '<select id="reportType">' +
+            '<option value="income_expense">รายรับ - รายจ่าย</option>' +
+            '<option value="cash_bank">เงินสด / ธนาคาร</option>' +
+            '<option value="transactions">รายการทั้งหมด</option>' +
+            '<option value="documents">ทะเบียนเอกสาร</option>' +
+            '</select>' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label>วันที่เริ่มต้น</label>' +
+            '<input type="date" id="reportDateFrom" value="' +
+            escapeHtml(
+                toInputDate(
+                    new Date(
+                        new Date().getFullYear(),
+                        new Date().getMonth(),
+                        1
+                    )
+                )
+            ) +
+            '">' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label>วันที่สิ้นสุด</label>' +
+            '<input type="date" id="reportDateTo" value="' +
+            escapeHtml(
+                toInputDate(
+                    new Date()
+                )
+            ) +
+            '">' +
+            '</div>' +
+            '<div class="form-group filter-actions">' +
+            '<button type="button" class="btn btn-primary" data-action="run-report">สร้างรายงาน</button>' +
+            '<button type="button" class="btn btn-secondary" data-action="export-report">Excel</button>' +
+            '</div>' +
+            '</div>' +
+            '</div>' +
+            '<div id="reportSummary" class="dashboard-cards"></div>' +
+            '<div class="card">' +
+            '<div class="card-header">' +
+            '<h3>ผลรายงาน</h3>' +
+            '</div>' +
+            '<div id="reportTableContainer" class="table-responsive">' +
+            '<div class="empty-state">เลือกช่วงเวลาแล้วกด “สร้างรายงาน”</div>' +
+            '</div>' +
+            '</div>' +
+            '</section>';
+
+        await runReport();
+    }
+
+    async function runReport() {
+        const reportTypeElement =
+            byId('reportType');
+
+        const dateFromElement =
+            byId('reportDateFrom');
+
+        const dateToElement =
+            byId('reportDateTo');
+
+        if (
+            !reportTypeElement ||
+            !dateFromElement ||
+            !dateToElement
+        ) {
+            return;
+        }
+
+        const reportType =
+            reportTypeElement.value;
+
+        const dateFrom =
+            dateFromElement.value;
+
+        const dateTo =
+            dateToElement.value;
+
+        try {
+            setLoading(
+                true,
+                'กำลังสร้างรายงาน...'
+            );
+
+            const response =
+                await apiRequest(
+                    'report',
+                    {
+                        reportType:
+                            reportType,
+                        dateFrom:
+                            dateFrom,
+                        dateTo:
+                            dateTo
+                    }
+                );
+
+            const data =
+                unwrapResponse(
+                    response
+                ) ||
+                {};
+
+            state.reportData =
+                data;
+
+            renderReportResult(
+                data
+            );
+        } catch (error) {
+            showToast(
+                error.message ||
+                'ไม่สามารถสร้างรายงานได้',
+                'error'
+            );
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    function renderReportResult(data) {
+        const rows =
+            normalizeArray(
+                data.rows ||
+                data.items ||
+                data.records ||
+                data.data
+            );
+
+        const summary =
+            data.summary ||
+            {};
+
+        const summaryContainer =
+            byId(
+                'reportSummary'
+            );
+
+        if (summaryContainer) {
+            summaryContainer.innerHTML =
+                createStatCard(
+                    'รายรับ',
+                    'reportIncome',
+                    formatMoney(
+                        summary.income ||
+                        data.income ||
+                        0
+                    )
+                ) +
+                createStatCard(
+                    'รายจ่าย',
+                    'reportExpense',
+                    formatMoney(
+                        summary.expense ||
+                        data.expense ||
+                        0
+                    )
+                ) +
+                createStatCard(
+                    'สุทธิ',
+                    'reportNet',
+                    formatMoney(
+                        summary.net ||
+                        data.net ||
+                        0
+                    )
+                );
+        }
+
+        const tableContainer =
+            byId(
+                'reportTableContainer'
+            );
+
+        if (!tableContainer) {
+            return;
+        }
+
+        if (!rows.length) {
+            tableContainer.innerHTML =
+                '<div class="empty-state">ไม่พบข้อมูลในช่วงเวลาที่เลือก</div>';
+
+            return;
+        }
+
+        tableContainer.innerHTML =
+            renderGenericTable(
+                rows,
+                'reports'
+            );
+    }
+
+    async function renderSettingsPage() {
+        if (!isAdmin()) {
+            showToast(
+                'เฉพาะผู้ดูแลระบบเท่านั้น',
+                'warning'
+            );
+
+            return;
+        }
+
+        const container =
+            getPageContainer(
+                'settings'
+            );
+
+        let settings = [];
+
+        try {
+            const response =
+                await apiRequest(
+                    'settings',
+                    {}
+                );
+
+            const data =
+                unwrapResponse(
+                    response
+                );
+
+            settings =
+                normalizeArray(
+                    data
+                );
+
+            if (!settings.length) {
+                settings =
+                    Object.keys(
+                        state.settings
+                    ).map(
+                        function (key) {
+                            const value =
+                                state.settings[
+                                    key
+                                ];
+
+                            if (
+                                value &&
+                                typeof value ===
+                                'object'
+                            ) {
+                                return {
+                                    key:
+                                        key,
+                                    value:
+                                        value.value ||
+                                        '',
+                                    description:
+                                        value.description ||
+                                        ''
+                                };
+                            }
+
+                            return {
+                                key:
+                                    key,
+                                value:
+                                    value,
+                                description:
+                                    ''
+                            };
+                        }
+                    );
+            }
+        } catch (error) {
+            settings =
+                Object.keys(
+                    state.settings
+                ).map(
+                    function (key) {
+                        return {
+                            key:
+                                key,
+                            value:
+                                state.settings[
+                                    key
+                                ],
+                            description:
+                                ''
+                        };
+                    }
+                );
+        }
+
+        let rowsHtml = '';
+
+        settings.forEach(
+            function (setting) {
+                rowsHtml +=
+                    '<tr>' +
+                    '<td>' +
+                    escapeHtml(
+                        setting.key ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        setting.value ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        setting.description ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td class="text-center">' +
+                    '<button type="button" class="btn-icon" data-action="edit-setting" data-key="' +
+                    escapeHtml(
+                        setting.key ||
+                        ''
+                    ) +
+                    '">✎</button>' +
+                    '</td>' +
+                    '</tr>';
+            }
+        );
+
+        container.innerHTML =
+            '<section class="settings-page">' +
+            '<div class="page-toolbar">' +
+            '<div>' +
+            '<h2>ตั้งค่ากิจการ</h2>' +
+            '<p>ข้อมูลและค่าการทำงานของระบบ</p>' +
+            '</div>' +
+            '<div class="toolbar-actions">' +
+            '<button type="button" class="btn btn-primary" data-action="create-setting">＋ เพิ่มการตั้งค่า</button>' +
+            '</div>' +
+            '</div>' +
+            '<div class="card">' +
+            '<div class="card-body no-padding">' +
+            '<div class="table-responsive">' +
+            '<table class="data-table">' +
+            '<thead>' +
+            '<tr>' +
+            '<th>Key</th>' +
+            '<th>Value</th>' +
+            '<th>รายละเอียด</th>' +
+            '<th>จัดการ</th>' +
+            '</tr>' +
+            '</thead>' +
+            '<tbody>' +
+            rowsHtml +
+            '</tbody>' +
+            '</table>' +
+            '</div>' +
+            '</div>' +
+            '</div>' +
+            '</section>';
+    }
+
+    function openSettingModal(key) {
+        const existing =
+            key
+                ? (
+                    state.settings[
+                        key
+                    ] || {}
+                )
+                : {};
+
+        const currentValue =
+            existing &&
+            typeof existing ===
+            'object'
+                ? existing.value ||
+                  ''
+                : existing;
+
+        const currentDescription =
+            existing &&
+            typeof existing ===
+            'object'
+                ? existing.description ||
+                  ''
+                : '';
 
         openModal({
             title:
-                "ดูเอกสาร " +
-                (
-                    document.docNo ||
-                    ""
-                ),
-            content:
-                content,
-            footer: `
-                <button
-                    type="button"
-                    class="btn btn-outline-secondary"
-                    data-action="close-modal"
-                >
-                    ปิด
-                </button>
-
-                <button
-                    type="button"
-                    class="btn btn-primary"
-                    data-action="print-current-document"
-                >
-                    พิมพ์ / PDF
-                </button>
-            `,
-            size: "modal-xl"
-        });
-
-        if (printAfterLoad) {
-            setTimeout(
-                function () {
-                    printDocumentPreview(
-                        document,
-                        items
-                    );
+                key
+                    ? 'แก้ไขการตั้งค่า'
+                    : 'เพิ่มการตั้งค่า',
+            fields: [
+                {
+                    name: 'key',
+                    label: 'Key',
+                    type: 'text',
+                    value:
+                        key ||
+                        '',
+                    required: true,
+                    readonly:
+                        !!key
                 },
-                300
-            );
-        }
-    } catch (error) {
-        handleApiError(error);
-    } finally {
-        hideLoading();
-    }
-}
-
-function renderDocumentPreview(
-    document,
-    items
-) {
-    const businessName =
-        AppState.settings.business_name ||
-        AppState.settings.company_name ||
-        "กิจการ";
-
-    const businessAddress =
-        AppState.settings.address ||
-        "";
-
-    const businessTaxId =
-        AppState.settings.tax_id ||
-        "";
-
-    const subtotal =
-        toNumber(
-            document.subtotal
-        );
-
-    const discount =
-        toNumber(
-            document.discount
-        );
-
-    const taxAmount =
-        toNumber(
-            document.taxAmount
-        );
-
-    const total =
-        toNumber(
-            document.total
-        );
-
-    return `
-        <div
-            class="document-preview"
-            id="currentDocumentPreview"
-        >
-
-            <div class="document-preview-header">
-
-                <div>
-
-                    <div class="document-preview-title">
-                        ${escapeHTML(
-                            getDocumentTypeName(
-                                document.docType
-                            )
-                        )}
-                    </div>
-
-                    <div class="document-preview-company">
-                        <div class="document-preview-company-name">
-                            ${escapeHTML(
-                                businessName
-                            )}
-                        </div>
-
-                        <div class="document-preview-company-info">
-                            ${escapeHTML(
-                                businessAddress
-                            )}
-                        </div>
-
-                        ${
-                            businessTaxId
-                                ? `
-                                    <div class="document-preview-company-info">
-                                        เลขประจำตัวผู้เสียภาษี ${escapeHTML(
-                                            businessTaxId
-                                        )}
-                                    </div>
-                                `
-                                : ""
+                {
+                    name: 'value',
+                    label: 'Value',
+                    type: 'text',
+                    value:
+                        currentValue ||
+                        ''
+                },
+                {
+                    name: 'description',
+                    label: 'รายละเอียด',
+                    type: 'textarea',
+                    value:
+                        currentDescription ||
+                        ''
+                }
+            ],
+            submitLabel:
+                'บันทึกการตั้งค่า',
+            onSubmit:
+                async function (
+                    values
+                ) {
+                    await apiRequest(
+                        'updatesetting',
+                        {
+                            key:
+                                values.key,
+                            value:
+                                values.value,
+                            description:
+                                values.description
                         }
-
-                    </div>
-
-                </div>
-
-                <div class="document-preview-number">
-
-                    <div>
-                        เลขที่:
-                        <strong>
-                            ${escapeHTML(
-                                document.docNo ||
-                                "-"
-                            )}
-                        </strong>
-                    </div>
-
-                    <div>
-                        วันที่:
-                        ${formatDate(
-                            document.date
-                        )}
-                    </div>
-
-                    ${
-                        document.dueDate
-                            ? `
-                                <div>
-                                    ครบกำหนด:
-                                    ${formatDate(
-                                        document.dueDate
-                                    )}
-                                </div>
-                            `
-                            : ""
-                    }
-
-                </div>
-
-            </div>
-
-            <div class="document-party-box">
-
-                <div class="info-grid">
-
-                    <div class="info-item">
-
-                        <div class="info-label">
-                            ผู้ติดต่อ
-                        </div>
-
-                        <div class="info-value">
-                            ${escapeHTML(
-                                document.partyName ||
-                                "-"
-                            )}
-                        </div>
-
-                    </div>
-
-                    <div class="info-item">
-
-                        <div class="info-label">
-                            เลขประจำตัวผู้เสียภาษี
-                        </div>
-
-                        <div class="info-value">
-                            ${escapeHTML(
-                                document.taxId ||
-                                "-"
-                            )}
-                        </div>
-
-                    </div>
-
-                    <div class="info-item">
-
-                        <div class="info-label">
-                            โทรศัพท์
-                        </div>
-
-                        <div class="info-value">
-                            ${escapeHTML(
-                                document.phone ||
-                                "-"
-                            )}
-                        </div>
-
-                    </div>
-
-                    <div class="info-item">
-
-                        <div class="info-label">
-                            หัวข้อ
-                        </div>
-
-                        <div class="info-value">
-                            ${escapeHTML(
-                                document.subject ||
-                                "-"
-                            )}
-                        </div>
-
-                    </div>
-
-                </div>
-
-                ${
-                    document.address
-                        ? `
-                            <div class="info-item">
-                                <div class="info-label">
-                                    ที่อยู่
-                                </div>
-
-                                <div class="info-value">
-                                    ${escapeHTML(
-                                        document.address
-                                    )}
-                                </div>
-                            </div>
-                        `
-                        : ""
-                }
-
-            </div>
-
-            <div class="document-preview-table">
-
-                <table>
-
-                    <thead>
-
-                        <tr>
-
-                            <th style="width:60px;">
-                                ลำดับ
-                            </th>
-
-                            <th>
-                                รายการ
-                            </th>
-
-                            <th style="width:80px;">
-                                จำนวน
-                            </th>
-
-                            <th style="width:90px;">
-                                หน่วย
-                            </th>
-
-                            <th style="width:120px;">
-                                ราคา
-                            </th>
-
-                            <th style="width:130px;">
-                                รวม
-                            </th>
-
-                        </tr>
-
-                    </thead>
-
-                    <tbody>
-
-                        ${
-                            items.length
-                                ? items
-                                    .map(
-                                        function (
-                                            item,
-                                            index
-                                        ) {
-                                            return `
-                                                <tr>
-
-                                                    <td class="text-center">
-                                                        ${index + 1}
-                                                    </td>
-
-                                                    <td>
-                                                        ${escapeHTML(
-                                                            item.description ||
-                                                            "-"
-                                                        )}
-                                                    </td>
-
-                                                    <td class="text-right">
-                                                        ${formatMoney(
-                                                            item.qty ||
-                                                            0
-                                                        )}
-                                                    </td>
-
-                                                    <td class="text-center">
-                                                        ${escapeHTML(
-                                                            item.unit ||
-                                                            ""
-                                                        )}
-                                                    </td>
-
-                                                    <td class="text-right">
-                                                        ${formatMoney(
-                                                            item.unitPrice ||
-                                                            0
-                                                        )}
-                                                    </td>
-
-                                                    <td class="text-right">
-                                                        ${formatMoney(
-                                                            item.amount ||
-                                                            calculateDocumentItemAmount(
-                                                                item
-                                                            )
-                                                        )}
-                                                    </td>
-
-                                                </tr>
-                                            `;
-                                        }
-                                    )
-                                    .join("")
-                                : `
-                                    <tr>
-                                        <td
-                                            colspan="6"
-                                            class="text-center"
-                                        >
-                                            ไม่มีรายการ
-                                        </td>
-                                    </tr>
-                                `
-                        }
-
-                    </tbody>
-
-                </table>
-
-            </div>
-
-            <div class="document-preview-summary">
-
-                <div class="summary-row">
-
-                    <span>
-                        รวมก่อนส่วนลด
-                    </span>
-
-                    <strong>
-                        ${formatMoney(
-                            subtotal
-                        )}
-                    </strong>
-
-                </div>
-
-                <div class="summary-row">
-
-                    <span>
-                        ส่วนลด
-                    </span>
-
-                    <strong>
-                        ${formatMoney(
-                            discount
-                        )}
-                    </strong>
-
-                </div>
-
-                <div class="summary-row">
-
-                    <span>
-                        ภาษี
-                        ${document.taxRate
-                            ? "(" +
-                              formatMoney(
-                                  document.taxRate
-                              ) +
-                              "%)"
-                            : ""}
-                    </span>
-
-                    <strong>
-                        ${formatMoney(
-                            taxAmount
-                        )}
-                    </strong>
-
-                </div>
-
-                <div class="summary-row total">
-
-                    <span>
-                        รวมทั้งสิ้น
-                    </span>
-
-                    <strong>
-                        ${formatMoney(
-                            total
-                        )}
-                    </strong>
-
-                </div>
-
-            </div>
-
-            ${
-                document.notes
-                    ? `
-                        <div class="mt-4">
-                            <strong>
-                                หมายเหตุ
-                            </strong>
-
-                            <div class="notice mt-2">
-                                ${escapeHTML(
-                                    document.notes
-                                )}
-                            </div>
-                        </div>
-                    `
-                    : ""
-            }
-
-            <div class="document-preview-signatures">
-
-                <div class="signature-box">
-
-                    <div class="signature-line"></div>
-
-                    <div class="signature-name">
-                        ผู้จัดทำ
-                    </div>
-
-                    <div class="signature-position">
-                        วันที่ __________________
-                    </div>
-
-                </div>
-
-                <div class="signature-box">
-
-                    <div class="signature-line"></div>
-
-                    <div class="signature-name">
-                        ผู้อนุมัติ / ผู้รับเอกสาร
-                    </div>
-
-                    <div class="signature-position">
-                        วันที่ __________________
-                    </div>
-
-                </div>
-
-            </div>
-
-        </div>
-    `;
-}
-
-function printDocumentPreview(
-    document,
-    items
-) {
-    const preview =
-        renderDocumentPreview(
-            document,
-            items
-        );
-
-    const printWindow =
-        window.open(
-            "",
-            "_blank"
-        );
-
-    if (!printWindow) {
-        showToast(
-            "ไม่สามารถเปิดหน้าพิมพ์",
-            "กรุณาอนุญาต Pop-up สำหรับเว็บไซต์นี้",
-            "warning"
-        );
-
-        return;
-    }
-
-    printWindow.document.open();
-
-    printWindow.document.write(
-        `
-        <!DOCTYPE html>
-
-        <html lang="th">
-
-        <head>
-
-            <meta charset="UTF-8">
-
-            <title>
-                ${escapeHTML(
-                    document.docNo ||
-                    "Document"
-                )}
-            </title>
-
-            <style>
-
-                @page {
-                    size: A4;
-                    margin: 0;
-                }
-
-                * {
-                    box-sizing: border-box;
-                }
-
-                body {
-                    margin: 0;
-                    padding: 0;
-                    background: #ffffff;
-                    color: #222222;
-                    font-family:
-                        "TH Sarabun New",
-                        "TH Sarabun",
-                        Tahoma,
-                        Arial,
-                        sans-serif;
-                    font-size: 17px;
-                }
-
-                .document-preview {
-                    width: 210mm;
-                    min-height: 297mm;
-                    margin: 0 auto;
-                    padding: 15mm;
-                    background: #ffffff;
-                }
-
-                .document-preview-header {
-                    padding-bottom: 20px;
-                    display: flex;
-                    align-items: flex-start;
-                    justify-content: space-between;
-                    gap: 25px;
-                    border-bottom: 2px solid #263238;
-                }
-
-                .document-preview-title {
-                    color: #263238;
-                    font-size: 32px;
-                    font-weight: 700;
-                }
-
-                .document-preview-number {
-                    text-align: right;
-                    color: #555555;
-                    font-size: 17px;
-                }
-
-                .document-preview-company {
-                    margin-top: 20px;
-                }
-
-                .document-preview-company-name {
-                    color: #263238;
-                    font-size: 25px;
-                    font-weight: 700;
-                }
-
-                .document-preview-company-info {
-                    color: #555555;
-                    font-size: 17px;
-                }
-
-                .document-party-box {
-                    margin-top: 15px;
-                    padding: 12px;
-                    background: #fafafa;
-                    border: 1px solid #dddddd;
-                }
-
-                .info-grid {
-                    display: grid;
-                    grid-template-columns: 1fr 1fr;
-                }
-
-                .info-item {
-                    padding: 7px 9px;
-                    border-bottom: 1px solid #eeeeee;
-                }
-
-                .info-label {
-                    color: #777777;
-                    font-size: 14px;
-                }
-
-                .info-value {
-                    color: #222222;
-                    font-size: 17px;
-                    font-weight: 700;
-                }
-
-                .document-preview-table {
-                    margin-top: 25px;
-                }
-
-                .document-preview-table table {
-                    width: 100%;
-                    border-collapse: collapse;
-                }
-
-                .document-preview-table th {
-                    padding: 8px;
-                    border-top: 1px solid #222222;
-                    border-bottom: 1px solid #222222;
-                    font-weight: 700;
-                    text-align: left;
-                }
-
-                .document-preview-table td {
-                    padding: 8px;
-                    border-bottom: 1px solid #dddddd;
-                }
-
-                .text-right {
-                    text-align: right;
-                }
-
-                .text-center {
-                    text-align: center;
-                }
-
-                .document-preview-summary {
-                    width: 330px;
-                    max-width: 100%;
-                    margin: 20px 0 0 auto;
-                }
-
-                .summary-row {
-                    display: flex;
-                    align-items: center;
-                    justify-content: space-between;
-                    padding: 5px 0;
-                }
-
-                .summary-row.total {
-                    margin-top: 7px;
-                    padding-top: 10px;
-                    border-top: 1px solid #222222;
-                    font-size: 23px;
-                    font-weight: 700;
-                }
-
-                .mt-4 {
-                    margin-top: 20px;
-                }
-
-                .notice {
-                    padding: 10px;
-                    border: 1px solid #dddddd;
-                    background: #fafafa;
-                }
-
-                .document-preview-signatures {
-                    margin-top: 70px;
-                    display: grid;
-                    grid-template-columns: 1fr 1fr;
-                    gap: 50px;
-                }
-
-                .signature-box {
-                    text-align: center;
-                }
-
-                .signature-line {
-                    width: 80%;
-                    margin: 50px auto 7px;
-                    border-bottom: 1px solid #222222;
-                }
-
-                .signature-name {
-                    font-weight: 700;
-                }
-
-                .signature-position {
-                    color: #666666;
-                }
-
-            </style>
-
-        </head>
-
-        <body>
-
-            ${preview}
-
-            <script>
-                window.onload = function () {
-                    window.print();
-
-                    setTimeout(
-                        function () {
-                            window.close();
-                        },
-                        500
                     );
-                };
-            <\/script>
 
-        </body>
+                    showToast(
+                        'บันทึกการตั้งค่าสำเร็จ',
+                        'success'
+                    );
 
-        </html>
-        `
-    );
+                    await loadBootstrap();
 
-    printWindow.document.close();
-}
-
-/* =========================================================
-   39. DELETE / CANCEL
-   ========================================================= */
-
-async function deleteEntity(
-    entity,
-    id,
-    title
-) {
-    if (!id) {
-        return;
+                    await renderSettingsPage();
+                }
+        });
     }
 
-    if (!canDelete()) {
-        showToast(
-            "ไม่มีสิทธิ์",
-            "คุณไม่มีสิทธิ์ลบข้อมูล",
-            "warning"
-        );
-
-        return;
-    }
-
-    const confirmed =
-        await confirmAction(
-            "ยืนยันการลบ",
-            "คุณต้องการลบ " +
-                (
-                    title ||
-                    "รายการนี้"
-                ) +
-                " ใช่หรือไม่?"
-        );
-
-    if (!confirmed) {
-        return;
-    }
-
-    showLoading(
-        "กำลังดำเนินการ..."
-    );
-
-    try {
-        await apiRequest(
-            "delete",
-            {
-                entity: entity,
-                id: id
-            }
-        );
-
-        showToast(
-            "ดำเนินการสำเร็จ",
-            "ลบข้อมูลเรียบร้อยแล้ว",
-            "success"
-        );
-
-        const page =
-            entity === "Accounts"
-                ? "accounts"
-                : entity === "Customers"
-                    ? "customers"
-                    : entity === "Vendors"
-                        ? "vendors"
-                        : entity === "Users"
-                            ? "users"
-                            : entity === "Income"
-                                ? "incomes"
-                                : entity === "Expense"
-                                    ? "expenses"
-                                    : entity === "Transfers"
-                                        ? "transfers"
-                                        : "dashboard";
-
-        await navigateTo(
-            page
-        );
-    } catch (error) {
-        handleApiError(error);
-    } finally {
-        hideLoading();
-    }
-}
-
-async function cancelDocument(id) {
-    const confirmed =
-        await confirmAction(
-            "ยืนยันการยกเลิก",
-            "เอกสารที่ยกเลิกแล้วจะไม่ควรถูกนำไปใช้งานต่อ ต้องการยกเลิกเอกสารนี้หรือไม่?"
-        );
-
-    if (!confirmed) {
-        return;
-    }
-
-    showLoading(
-        "กำลังยกเลิกเอกสาร..."
-    );
-
-    try {
-        await apiRequest(
-            "cancelDocument",
-            {
-                id: id
-            }
-        );
-
-        showToast(
-            "ยกเลิกสำเร็จ",
-            "ยกเลิกเอกสารเรียบร้อยแล้ว",
-            "success"
-        );
-
-        await navigateTo(
-            "documents"
-        );
-    } catch (error) {
-        handleApiError(error);
-    } finally {
-        hideLoading();
-    }
-}
-
-/* =========================================================
-   40. CONFIRM
-   ========================================================= */
-
-function confirmAction(
-    title,
-    message
-) {
-    return new Promise(
-        function (resolve) {
-            const content = `
-                <div class="confirm-dialog">
-
-                    <div class="confirm-icon">
-                        !
-                    </div>
-
-                    <div class="confirm-title">
-                        ${escapeHTML(
-                            title ||
-                            "ยืนยัน"
-                        )}
-                    </div>
-
-                    <div class="confirm-message">
-                        ${escapeHTML(
-                            message ||
-                            ""
-                        )}
-                    </div>
-
-                </div>
-            `;
-
-            const footer = `
-                <button
-                    type="button"
-                    class="btn btn-outline-secondary"
-                    id="confirmCancelButton"
-                >
-                    ยกเลิก
-                </button>
-
-                <button
-                    type="button"
-                    class="btn btn-danger"
-                    id="confirmOkButton"
-                >
-                    ยืนยัน
-                </button>
-            `;
-
-            openModal({
-                title:
-                    title ||
-                    "ยืนยัน",
-                content:
-                    content,
-                footer:
-                    footer,
-                size:
-                    "modal-sm"
-            });
-
-            const ok =
-                byId(
-                    "confirmOkButton"
-                );
-
-            const cancel =
-                byId(
-                    "confirmCancelButton"
-                );
-
-            if (ok) {
-                ok.addEventListener(
-                    "click",
-                    function () {
-                        closeModal();
-                        resolve(true);
-                    }
-                );
-            }
-
-            if (cancel) {
-                cancel.addEventListener(
-                    "click",
-                    function () {
-                        closeModal();
-                        resolve(false);
-                    }
-                );
-            }
-        }
-    );
-}
-
-/* =========================================================
-   41. OPTIONS
-   ========================================================= */
-
-function renderAccountOptions(selectedId) {
-    return AppState.accounts
-        .filter(function (account) {
-            return account.active !== false;
-        })
-        .map(function (account) {
-            return `
-                <option
-                    value="${escapeAttribute(
-                        account.id
-                    )}"
-                    ${String(
-                        account.id
-                    ) === String(
-                        selectedId
-                    ) ? "selected" : ""}
-                >
-                    ${escapeHTML(
-                        account.code ||
-                        ""
-                    )}
-                    -
-                    ${escapeHTML(
-                        account.name ||
-                        ""
-                    )}
-                </option>
-            `;
-        })
-        .join("");
-}
-
-function renderCategoryOptions(
-    type,
-    selectedId
-) {
-    return AppState.categories
-        .filter(function (category) {
-            return (
-                category.active !== false &&
-                (
-                    !type ||
-                    String(
-                        category.type ||
-                        ""
-                    ).toUpperCase() ===
-                    String(
-                        type
-                    ).toUpperCase()
-                )
+    async function renderAuditLogsPage() {
+        if (!isAdmin()) {
+            showToast(
+                'เฉพาะผู้ดูแลระบบเท่านั้น',
+                'warning'
             );
-        })
-        .map(function (category) {
-            return `
-                <option
-                    value="${escapeAttribute(
-                        category.id
-                    )}"
-                    ${String(
-                        category.id
-                    ) === String(
-                        selectedId
-                    ) ? "selected" : ""}
-                >
-                    ${escapeHTML(
-                        category.code ||
-                        ""
-                    )}
-                    -
-                    ${escapeHTML(
-                        category.name ||
-                        ""
-                    )}
-                </option>
-            `;
-        })
-        .join("");
-}
 
-function renderCustomerOptions(
-    selectedId
-) {
-    return AppState.customers
-        .filter(function (item) {
-            return item.active !== false;
-        })
-        .map(function (item) {
-            return `
-                <option
-                    value="${escapeAttribute(
-                        item.id
-                    )}"
-                    ${String(
-                        item.id
-                    ) === String(
-                        selectedId
-                    ) ? "selected" : ""}
-                >
-                    ${escapeHTML(
-                        item.code ||
-                        ""
-                    )}
-                    -
-                    ${escapeHTML(
-                        item.name ||
-                        ""
-                    )}
-                </option>
-            `;
-        })
-        .join("");
-}
+            return;
+        }
 
-function renderVendorOptions(
-    selectedId
-) {
-    return AppState.vendors
-        .filter(function (item) {
-            return item.active !== false;
-        })
-        .map(function (item) {
-            return `
-                <option
-                    value="${escapeAttribute(
-                        item.id
-                    )}"
-                    ${String(
-                        item.id
-                    ) === String(
-                        selectedId
-                    ) ? "selected" : ""}
-                >
-                    ${escapeHTML(
-                        item.code ||
-                        ""
-                    )}
-                    -
-                    ${escapeHTML(
-                        item.name ||
-                        ""
-                    )}
-                </option>
-            `;
-        })
-        .join("");
-}
+        const container =
+            getPageContainer(
+                'auditlogs'
+            );
 
-function renderDocumentTypeOptions(
-    selected
-) {
-    const types = [
-        [
-            "QUOTATION",
-            "ใบเสนอราคา"
-        ],
-        [
-            "INVOICE",
-            "ใบแจ้งหนี้"
-        ],
-        [
-            "BILLING",
-            "ใบวางบิล"
-        ],
-        [
-            "RECEIPT",
-            "ใบเสร็จรับเงิน"
-        ],
-        [
-            "PAYMENT_RECEIPT",
-            "ใบรับเงิน"
-        ],
-        [
-            "RECEIVING_VOUCHER",
-            "ใบสำคัญรับ"
-        ],
-        [
-            "PAYMENT_VOUCHER",
-            "ใบสำคัญจ่าย"
-        ],
-        [
-            "PAYMENT_CERTIFICATE",
-            "หนังสือรับรองการจ่ายเงิน"
-        ],
-        [
-            "OTHER",
-            "อื่น ๆ"
-        ]
-    ];
+        container.innerHTML =
+            '<section class="auditlogs-page">' +
+            '<div class="page-toolbar">' +
+            '<div>' +
+            '<h2>Audit Log</h2>' +
+            '<p>ประวัติการทำรายการของผู้ใช้งาน</p>' +
+            '</div>' +
+            '<div class="toolbar-actions">' +
+            '<button type="button" class="btn btn-secondary" data-action="refresh-auditlogs">รีเฟรช</button>' +
+            '</div>' +
+            '</div>' +
+            '<div class="card filter-card">' +
+            '<div class="filter-grid">' +
+            '<div class="form-group">' +
+            '<label>วันที่เริ่มต้น</label>' +
+            '<input type="date" id="auditDateFrom">' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label>วันที่สิ้นสุด</label>' +
+            '<input type="date" id="auditDateTo">' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label>ค้นหา</label>' +
+            '<input type="search" id="auditSearch" placeholder="ผู้ใช้ / Action / รายละเอียด">' +
+            '</div>' +
+            '<div class="form-group filter-actions">' +
+            '<button type="button" class="btn btn-primary" data-action="load-auditlogs">ค้นหา</button>' +
+            '</div>' +
+            '</div>' +
+            '</div>' +
+            '<div class="card">' +
+            '<div id="auditLogsContainer" class="table-responsive">' +
+            '<div class="loading-state">กำลังโหลด...</div>' +
+            '</div>' +
+            '</div>' +
+            '</section>';
 
-    return types
-        .map(function (item) {
-            return `
-                <option
-                    value="${item[0]}"
-                    ${item[0] === selected ? "selected" : ""}
-                >
-                    ${item[1]}
-                </option>
-            `;
-        })
-        .join("");
-}
-
-function renderStatusOptions(
-    selected
-) {
-    const statuses = [
-        [
-            "DRAFT",
-            "ร่าง"
-        ],
-        [
-            "ISSUED",
-            "ออกเอกสารแล้ว"
-        ],
-        [
-            "PAID",
-            "ชำระแล้ว"
-        ],
-        [
-            "CANCELLED",
-            "ยกเลิก"
-        ],
-        [
-            "OVERDUE",
-            "เกินกำหนด"
-        ]
-    ];
-
-    return statuses
-        .map(function (item) {
-            return `
-                <option
-                    value="${item[0]}"
-                    ${item[0] === selected ? "selected" : ""}
-                >
-                    ${item[1]}
-                </option>
-            `;
-        })
-        .join("");
-}
-
-/* =========================================================
-   42. STATUS BADGES
-   ========================================================= */
-
-function renderStatusBadge(
-    status
-) {
-    const normalized =
-        String(
-            status ||
-            "ACTIVE"
-        ).toUpperCase();
-
-    let className =
-        "badge-secondary";
-
-    if (
-        normalized === "ACTIVE" ||
-        normalized === "PAID"
-    ) {
-        className =
-            "badge-success";
+        await loadAuditLogs();
     }
 
-    if (
-        normalized === "DRAFT" ||
-        normalized === "ISSUED"
-    ) {
-        className =
-            "badge-primary";
-    }
+    async function loadAuditLogs() {
+        const container =
+            byId(
+                'auditLogsContainer'
+            );
 
-    if (
-        normalized === "CANCELLED"
-    ) {
-        className =
-            "badge-danger";
-    }
+        if (container) {
+            container.innerHTML =
+                '<div class="loading-state">กำลังโหลด Audit Log...</div>';
+        }
 
-    if (
-        normalized === "OVERDUE"
-    ) {
-        className =
-            "badge-warning";
-    }
+        try {
+            const response =
+                await apiRequest(
+                    'auditlogs',
+                    {
+                        dateFrom:
+                            byId(
+                                'auditDateFrom'
+                            )
+                                ? byId(
+                                    'auditDateFrom'
+                                ).value
+                                : '',
+                        dateTo:
+                            byId(
+                                'auditDateTo'
+                            )
+                                ? byId(
+                                    'auditDateTo'
+                                ).value
+                                : '',
+                        search:
+                            byId(
+                                'auditSearch'
+                            )
+                                ? byId(
+                                    'auditSearch'
+                                ).value.trim()
+                                : ''
+                    }
+                );
 
-    return `
-        <span class="badge ${className}">
-            ${escapeHTML(
-                getStatusName(
-                    normalized
-                )
-            )}
-        </span>
-    `;
-}
+            const data =
+                unwrapResponse(
+                    response
+                );
 
-function renderDocumentStatusBadge(
-    status
-) {
-    const normalized =
-        String(
-            status ||
-            "DRAFT"
-        ).toUpperCase();
+            const rows =
+                normalizeArray(
+                    data
+                );
 
-    let className =
-        "document-status-draft";
+            if (!container) {
+                return;
+            }
 
-    if (
-        normalized === "ISSUED"
-    ) {
-        className =
-            "document-status-issued";
-    }
+            if (!rows.length) {
+                container.innerHTML =
+                    '<div class="empty-state">ไม่พบ Audit Log</div>';
 
-    if (
-        normalized === "PAID"
-    ) {
-        className =
-            "document-status-paid";
-    }
+                return;
+            }
 
-    if (
-        normalized === "CANCELLED"
-    ) {
-        className =
-            "document-status-cancelled";
-    }
+            let html =
+                '<table class="data-table">' +
+                '<thead>' +
+                '<tr>' +
+                '<th>เวลา</th>' +
+                '<th>ผู้ใช้</th>' +
+                '<th>Action</th>' +
+                '<th>Entity</th>' +
+                '<th>รายละเอียด</th>' +
+                '<th>IP</th>' +
+                '</tr>' +
+                '</thead><tbody>';
 
-    if (
-        normalized === "OVERDUE"
-    ) {
-        className =
-            "document-status-overdue";
-    }
+            rows.forEach(
+                function (row) {
+                    html +=
+                        '<tr>' +
+                        '<td>' +
+                        escapeHtml(
+                            formatDateTime(
+                                row.createdAt ||
+                                row.timestamp ||
+                                row.time
+                            )
+                        ) +
+                        '</td>' +
+                        '<td>' +
+                        escapeHtml(
+                            row.username ||
+                            row.user ||
+                            ''
+                        ) +
+                        '</td>' +
+                        '<td>' +
+                        escapeHtml(
+                            row.action ||
+                            ''
+                        ) +
+                        '</td>' +
+                        '<td>' +
+                        escapeHtml(
+                            row.entity ||
+                            ''
+                        ) +
+                        '</td>' +
+                        '<td>' +
+                        escapeHtml(
+                            row.description ||
+                            row.details ||
+                            row.message ||
+                            ''
+                        ) +
+                        '</td>' +
+                        '<td>' +
+                        escapeHtml(
+                            row.ip ||
+                            ''
+                        ) +
+                        '</td>' +
+                        '</tr>';
+                }
+            );
 
-    return `
-        <span class="badge ${className}">
-            ${escapeHTML(
-                getStatusName(
-                    normalized
-                )
-            )}
-        </span>
-    `;
-}
+            html +=
+                '</tbody></table>';
 
-/* =========================================================
-   43. SELECT / FORM HELPERS
-   ========================================================= */
-
-function valueOf(id) {
-    const element =
-        byId(id);
-
-    if (!element) {
-        return "";
-    }
-
-    return element.value;
-}
-
-function setValue(
-    id,
-    value
-) {
-    const element =
-        byId(id);
-
-    if (!element) {
-        return;
-    }
-
-    element.value =
-        value === null ||
-        value === undefined
-            ? ""
-            : value;
-}
-
-function getSelectedText(id) {
-    const element =
-        byId(id);
-
-    if (!element) {
-        return "";
-    }
-
-    const option =
-        element.options[
-            element.selectedIndex
-        ];
-
-    if (!option) {
-        return "";
-    }
-
-    return option.textContent
-        .trim()
-        .replace(
-            /^[^-]+-\s*/,
-            ""
-        );
-}
-
-function getCustomerById(id) {
-    return getItemById(
-        AppState.customers,
-        id
-    );
-}
-
-function getVendorById(id) {
-    return getItemById(
-        AppState.vendors,
-        id
-    );
-
-/* =========================================================
-   44. DATE INITIALIZATION
-   ========================================================= */
-
-function initializeDateFields() {
-    $$(
-        'input[type="date"]'
-    ).forEach(
-        function (input) {
-            if (
-                !input.value &&
-                input.hasAttribute(
-                    "data-default-today"
-                )
-            ) {
-                input.value =
-                    getTodayString();
+            container.innerHTML =
+                html;
+        } catch (error) {
+            if (container) {
+                container.innerHTML =
+                    '<div class="empty-state error-state">' +
+                    escapeHtml(
+                        error.message ||
+                        'ไม่สามารถโหลด Audit Log ได้'
+                    ) +
+                    '</div>';
             }
         }
-    );
-}
-
-/* =========================================================
-   45. FILTERS
-   ========================================================= */
-
-async function applyIncomeFilter() {
-    AppState.filters.incomes = {
-        search:
-            valueOf(
-                "incomeSearch"
-            ),
-        startDate:
-            valueOf(
-                "incomeStartDate"
-            ),
-        endDate:
-            valueOf(
-                "incomeEndDate"
-            ),
-        accountId:
-            valueOf(
-                "incomeAccountFilter"
-            )
-    };
-
-    AppState.pagination.incomes.page =
-        1;
-
-    await navigateTo(
-        "incomes"
-    );
-}
-
-async function clearIncomeFilter() {
-    AppState.filters.incomes = {};
-
-    AppState.pagination.incomes.page =
-        1;
-
-    await navigateTo(
-        "incomes"
-    );
-}
-
-async function applyExpenseFilter() {
-    AppState.filters.expenses = {
-        search:
-            valueOf(
-                "expenseSearch"
-            ),
-        startDate:
-            valueOf(
-                "expenseStartDate"
-            ),
-        endDate:
-            valueOf(
-                "expenseEndDate"
-            ),
-        accountId:
-            valueOf(
-                "expenseAccountFilter"
-            )
-    };
-
-    AppState.pagination.expenses.page =
-        1;
-
-    await navigateTo(
-        "expenses"
-    );
-}
-
-async function clearExpenseFilter() {
-    AppState.filters.expenses = {};
-
-    AppState.pagination.expenses.page =
-        1;
-
-    await navigateTo(
-        "expenses"
-    );
-}
-
-async function applyCustomerFilter() {
-    AppState.filters.customers = {
-        search:
-            valueOf(
-                "customerSearch"
-            )
-    };
-
-    AppState.pagination.customers.page =
-        1;
-
-    await navigateTo(
-        "customers"
-    );
-}
-
-async function clearCustomerFilter() {
-    AppState.filters.customers = {};
-
-    AppState.pagination.customers.page =
-        1;
-
-    await navigateTo(
-        "customers"
-    );
-}
-
-async function applyVendorFilter() {
-    AppState.filters.vendors = {
-        search:
-            valueOf(
-                "vendorSearch"
-            )
-    };
-
-    AppState.pagination.vendors.page =
-        1;
-
-    await navigateTo(
-        "vendors"
-    );
-}
-
-async function clearVendorFilter() {
-    AppState.filters.vendors = {};
-
-    AppState.pagination.vendors.page =
-        1;
-
-    await navigateTo(
-        "vendors"
-    );
-}
-
-async function applyDocumentFilter() {
-    AppState.filters.documents = {
-        search:
-            valueOf(
-                "documentSearch"
-            ),
-        docType:
-            valueOf(
-                "documentTypeFilter"
-            ),
-        status:
-            valueOf(
-                "documentStatusFilter"
-            )
-    };
-
-    AppState.pagination.documents.page =
-        1;
-
-    await navigateTo(
-        "documents"
-    );
-}
-
-async function clearDocumentFilter() {
-    AppState.filters.documents = {};
-
-    AppState.pagination.documents.page =
-        1;
-
-    await navigateTo(
-        "documents"
-    );
-}
-
-async function applyReportFilter() {
-    AppState.filters.report = {
-        startDate:
-            valueOf(
-                "reportStartDate"
-            ),
-        endDate:
-            valueOf(
-                "reportEndDate"
-            )
-    };
-
-    await navigateTo(
-        "report"
-    );
-}
-
-/* =========================================================
-   46. PAGINATION EVENT
-   ========================================================= */
-
-async function changePage(
-    entity,
-    page
-) {
-    if (
-        !AppState.pagination[
-            entity
-        ]
-    ) {
-        return;
     }
 
-    const total =
-        AppState.pagination[
-            entity
-        ].total || 0;
-
-    const pageSize =
-        AppState.pagination[
-            entity
-        ].pageSize ||
-        APP_CONFIG.PAGE_SIZE;
-
-    const totalPages =
-        Math.max(
-            1,
-            Math.ceil(
-                total / pageSize
-            )
-        );
-
-    if (
-        page < 1 ||
-        page > totalPages
-    ) {
-        return;
-    }
-
-    AppState.pagination[
+    async function exportCurrentEntity(
         entity
-    ].page = page;
-
-    const pageMap = {
-        incomes: "incomes",
-        expenses: "expenses",
-        transfers: "transfers",
-        accounts: "accounts",
-        customers: "customers",
-        vendors: "vendors",
-        documents: "documents",
-        users: "users",
-        auditLogs: "auditLogs"
-    };
-
-    if (
-        pageMap[entity]
     ) {
-        await navigateTo(
-            pageMap[entity]
-        );
-    }
-}
-
-/* =========================================================
-   47. SETTINGS SAVE
-   ========================================================= */
-
-async function saveSetting(
-    key,
-    value
-) {
-    await apiRequest(
-        "updatesetting",
-        {
-            key: key,
-            value: value
-        }
-    );
-
-    AppState.settings[
-        key
-    ] = value;
-}
-
-async function saveBusinessSettings() {
-    const settings = {
-        business_name:
-            valueOf(
-                "settingBusinessName"
-            ),
-        tax_id:
-            valueOf(
-                "settingTaxId"
-            ),
-        address:
-            valueOf(
-                "settingAddress"
-            ),
-        phone:
-            valueOf(
-                "settingPhone"
-            ),
-        email:
-            valueOf(
-                "settingEmail"
-            ),
-        website:
-            valueOf(
-                "settingWebsite"
-            ),
-        business_description:
-            valueOf(
-                "settingDescription"
-            )
-    };
-
-    showLoading(
-        "กำลังบันทึกข้อมูลกิจการ..."
-    );
-
-    try {
-        for (
-            const key of Object.keys(
-                settings
-            )
+        if (
+            !state.currentRows ||
+            !state.currentRows.length
         ) {
-            await saveSetting(
-                key,
-                settings[key]
+            showToast(
+                'ไม่มีข้อมูลสำหรับส่งออก',
+                'warning'
             );
+
+            return;
         }
 
-        updateBusinessUI();
+        const rows =
+            state.currentRows;
 
-        showToast(
-            "บันทึกสำเร็จ",
-            "บันทึกข้อมูลกิจการเรียบร้อยแล้ว",
-            "success"
+        const filename =
+            entity +
+            '_' +
+            formatFileDate(
+                new Date()
+            );
+
+        await exportXlsx(
+            rows,
+            filename
         );
-    } catch (error) {
-        handleApiError(error);
-    } finally {
-        hideLoading();
     }
-}
 
-async function saveDocumentSettings() {
-    const inputs =
-        $$(
-            ".document-prefix-setting"
-        );
-
-    showLoading(
-        "กำลังบันทึกการตั้งค่า..."
-    );
-
-    try {
-        for (
-            const input of inputs
+    async function exportReport() {
+        if (
+            !state.reportData
         ) {
-            const key =
-                input.getAttribute(
-                    "data-setting-key"
+            showToast(
+                'กรุณาสร้างรายงานก่อน',
+                'warning'
+            );
+
+            return;
+        }
+
+        const rows =
+            normalizeArray(
+                state.reportData.rows ||
+                state.reportData.items ||
+                state.reportData.records ||
+                state.reportData.data
+            );
+
+        if (!rows.length) {
+            showToast(
+                'รายงานไม่มีข้อมูล',
+                'warning'
+            );
+
+            return;
+        }
+
+        await exportXlsx(
+            rows,
+            'report_' +
+            formatFileDate(
+                new Date()
+            )
+        );
+    }
+
+    async function exportXlsx(
+        rows,
+        filename
+    ) {
+        if (
+            window.XLSX
+        ) {
+            try {
+                const workbook =
+                    window.XLSX.utils.book_new();
+
+                const worksheet =
+                    window.XLSX.utils.json_to_sheet(
+                        rows
+                    );
+
+                window.XLSX.utils.book_append_sheet(
+                    workbook,
+                    worksheet,
+                    'ข้อมูล'
                 );
 
-            const value =
-                input.value.trim();
+                window.XLSX.writeFile(
+                    workbook,
+                    filename +
+                    '.xlsx'
+                );
 
-            if (!key) {
-                continue;
+                showToast(
+                    'ส่งออก Excel สำเร็จ',
+                    'success'
+                );
+
+                return;
+            } catch (error) {
+                console.error(
+                    'XLSX ERROR:',
+                    error
+                );
             }
-
-            await saveSetting(
-                key,
-                value
-            );
         }
+
+        const csv =
+            convertRowsToCsv(
+                rows
+            );
+
+        downloadBlob(
+            csv,
+            filename +
+            '.csv',
+            'text/csv;charset=utf-8'
+        );
 
         showToast(
-            "บันทึกสำเร็จ",
-            "บันทึกการตั้งค่าเอกสารเรียบร้อยแล้ว",
-            "success"
+            'ไม่พบไลบรารี Excel จึงส่งออกเป็น CSV แทน',
+            'warning',
+            6000
         );
-    } catch (error) {
-        handleApiError(error);
-    } finally {
-        hideLoading();
     }
-}
 
-/* =========================================================
-   48. SETTINGS TABS
-   ========================================================= */
-
-function activateSettingsTab(
-    tab
-) {
-    $$(
-        "[data-settings-tab]"
-    ).forEach(
-        function (button) {
-            button.classList.toggle(
-                "active",
-                button.getAttribute(
-                    "data-settings-tab"
-                ) === tab
-            );
+    function convertRowsToCsv(rows) {
+        if (!rows.length) {
+            return '';
         }
-    );
 
-    $$(
-        "[data-settings-panel]"
-    ).forEach(
-        function (panel) {
-            toggleElement(
-                panel,
-                panel.getAttribute(
-                    "data-settings-panel"
-                ) === tab
+        const keys =
+            getUsefulObjectKeys(
+                rows
             );
+
+        const lines = [];
+
+        lines.push(
+            keys.map(
+                function (key) {
+                    return csvEscape(
+                        prettifyKey(
+                            key
+                        )
+                    );
+                }
+            ).join(',')
+        );
+
+        rows.forEach(
+            function (row) {
+                lines.push(
+                    keys.map(
+                        function (key) {
+                            return csvEscape(
+                                displayValue(
+                                    row[key]
+                                )
+                            );
+                        }
+                    ).join(',')
+                );
+            }
+        );
+
+        return '\uFEFF' +
+            lines.join('\r\n');
+    }
+
+    function csvEscape(value) {
+        const text =
+            String(
+                value === null ||
+                value === undefined
+                    ? ''
+                    : value
+            );
+
+        if (
+            text.indexOf('"') !== -1 ||
+            text.indexOf(',') !== -1 ||
+            text.indexOf('\n') !== -1 ||
+            text.indexOf('\r') !== -1
+        ) {
+            return '"' +
+                text.replace(
+                    /"/g,
+                    '""'
+                ) +
+                '"';
         }
-    );
-}
 
-/* =========================================================
-   49. SIDEBAR
-   ========================================================= */
+        return text;
+    }
 
-function toggleSidebar() {
-    if (
-        window.innerWidth <= 900
+    function downloadBlob(
+        content,
+        filename,
+        mimeType
     ) {
-        document.body.classList.toggle(
-            "mobile-sidebar-open"
-        );
+        const blob =
+            content instanceof Blob
+                ? content
+                : new Blob(
+                    [content],
+                    {
+                        type:
+                            mimeType ||
+                            'application/octet-stream'
+                    }
+                );
 
-        ensureMobileSidebarOverlay();
+        const url =
+            URL.createObjectURL(
+                blob
+            );
 
-        return;
-    }
+        const anchor =
+            document.createElement(
+                'a'
+            );
 
-    document.body.classList.toggle(
-        "sidebar-collapsed"
-    );
-}
+        anchor.href =
+            url;
 
-function closeMobileSidebar() {
-    document.body.classList.remove(
-        "mobile-sidebar-open"
-    );
-
-    const overlay =
-        byId(
-            "mobileSidebarOverlay"
-        );
-
-    if (overlay) {
-        overlay.classList.remove(
-            "show"
-        );
-    }
-}
-
-function ensureMobileSidebarOverlay() {
-    let overlay =
-        byId(
-            "mobileSidebarOverlay"
-        );
-
-    if (!overlay) {
-        overlay = createElement(
-            "div",
-            "mobile-sidebar-overlay"
-        );
-
-        overlay.id =
-            "mobileSidebarOverlay";
+        anchor.download =
+            filename;
 
         document.body.appendChild(
-            overlay
+            anchor
         );
 
-        overlay.addEventListener(
-            "click",
-            closeMobileSidebar
+        anchor.click();
+
+        window.setTimeout(
+            function () {
+                document.body.removeChild(
+                    anchor
+                );
+
+                URL.revokeObjectURL(
+                    url
+                );
+            },
+            100
         );
     }
 
-    overlay.classList.toggle(
-        "show",
-        document.body.classList.contains(
-            "mobile-sidebar-open"
-        )
-    );
-}
+    function formatFileDate(date) {
+        const year =
+            date.getFullYear();
 
-/* =========================================================
-   50. CONNECTION STATUS
-   ========================================================= */
+        const month =
+            String(
+                date.getMonth() + 1
+            ).padStart(
+                2,
+                '0'
+            );
 
-function updateConnectionStatus(
-    status
-) {
-    const element =
-        byId(
-            "connectionStatus"
+        const day =
+            String(
+                date.getDate()
+            ).padStart(
+                2,
+                '0'
+            );
+
+        return (
+            year +
+            month +
+            day
         );
-
-    if (!element) {
-        return;
     }
 
-    element.classList.remove(
-        "online",
-        "offline",
-        "connecting"
-    );
+    async function downloadDocumentPdf(id) {
+        try {
+            setLoading(
+                true,
+                'กำลังเตรียม PDF...'
+            );
 
-    element.classList.add(
-        status
-    );
+            const response =
+                await apiRequest(
+                    'getDocumentWithItems',
+                    {
+                        id: id
+                    }
+                );
 
-    const label =
-        $(".connection-status-label", element);
+            const data =
+                unwrapResponse(
+                    response
+                );
 
-    if (label) {
-        if (
-            status === "online"
-        ) {
-            label.textContent =
-                "เชื่อมต่อแล้ว";
-        } else if (
-            status === "offline"
-        ) {
-            label.textContent =
-                "ออฟไลน์";
-        } else {
-            label.textContent =
-                "กำลังเชื่อมต่อ...";
-        }
-    }
-}
-
-/* =========================================================
-   51. GLOBAL EVENTS
-   ========================================================= */
-
-function bindGlobalEvents() {
-    document.addEventListener(
-        "click",
-        handleDocumentClick
-    );
-
-    document.addEventListener(
-        "submit",
-        function (event) {
-            event.preventDefault();
-        }
-    );
-
-    document.addEventListener(
-        "keydown",
-        function (event) {
             if (
-                event.key === "Escape"
+                window.html2pdf
             ) {
-                const modal =
-                    byId(
-                        "modalContainer"
+                await generatePdfWithHtml2Pdf(
+                    data
+                );
+
+                showToast(
+                    'สร้าง PDF สำเร็จ',
+                    'success'
+                );
+
+                return;
+            }
+
+            if (
+                window.jspdf &&
+                window.jspdf.jsPDF
+            ) {
+                generatePdfWithJsPdf(
+                    data
+                );
+
+                return;
+            }
+
+            printDocument(
+                data
+            );
+        } catch (error) {
+            console.error(
+                'PDF ERROR:',
+                error
+            );
+
+            showToast(
+                error.message ||
+                'ไม่สามารถสร้าง PDF ได้',
+                'error'
+            );
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    async function generatePdfWithHtml2Pdf(
+        data
+    ) {
+        const element =
+            createPrintableDocumentElement(
+                data
+            );
+
+        document.body.appendChild(
+            element
+        );
+
+        const filename =
+            (
+                data.docNo ||
+                data.documentNo ||
+                'document'
+            ) +
+            '.pdf';
+
+        try {
+            await window.html2pdf()
+                .set(
+                    {
+                        margin: 10,
+                        filename:
+                            filename,
+                        image: {
+                            type:
+                                'jpeg',
+                            quality:
+                                0.95
+                        },
+                        html2canvas: {
+                            scale: 2,
+                            useCORS:
+                                true
+                        },
+                        jsPDF: {
+                            unit:
+                                'mm',
+                            format:
+                                'a4',
+                            orientation:
+                                'portrait'
+                        }
+                    }
+                )
+                .from(
+                    element
+                )
+                .save();
+        } finally {
+            if (
+                element.parentNode
+            ) {
+                element.parentNode.removeChild(
+                    element
+                );
+            }
+        }
+    }
+
+    function generatePdfWithJsPdf(data) {
+        const JsPDF =
+            window.jspdf.jsPDF;
+
+        const pdf =
+            new JsPDF({
+                orientation:
+                    'portrait',
+                unit:
+                    'mm',
+                format:
+                    'a4'
+            });
+
+        const hasThaiFont =
+            !!(
+                window.TH_SARABUN_FONT &&
+                typeof window.TH_SARABUN_FONT ===
+                'string'
+            );
+
+        if (
+            hasThaiFont &&
+            typeof pdf.addFileToVFS ===
+            'function' &&
+            typeof pdf.addFont ===
+            'function'
+        ) {
+            try {
+                pdf.addFileToVFS(
+                    'THSarabunNew.ttf',
+                    window.TH_SARABUN_FONT
+                );
+
+                pdf.addFont(
+                    'THSarabunNew.ttf',
+                    'THSarabunNew',
+                    'normal'
+                );
+
+                pdf.setFont(
+                    'THSarabunNew'
+                );
+            } catch (error) {
+                console.warn(
+                    'Thai font registration failed:',
+                    error
+                );
+            }
+        }
+
+        pdf.setFontSize(
+            16
+        );
+
+        pdf.text(
+            safePdfText(
+                getDocumentTypeName(
+                    data.docType ||
+                    data.documentType
+                )
+            ),
+            20,
+            20
+        );
+
+        pdf.setFontSize(
+            11
+        );
+
+        pdf.text(
+            safePdfText(
+                'เลขที่: ' +
+                (
+                    data.docNo ||
+                    data.documentNo ||
+                    '-'
+                )
+            ),
+            20,
+            30
+        );
+
+        pdf.text(
+            safePdfText(
+                'วันที่: ' +
+                formatDate(
+                    data.date
+                )
+            ),
+            20,
+            37
+        );
+
+        pdf.text(
+            safePdfText(
+                'คู่ค้า: ' +
+                (
+                    data.partyName ||
+                    data.customerName ||
+                    data.vendorName ||
+                    '-'
+                )
+            ),
+            20,
+            44
+        );
+
+        let y = 58;
+
+        const items =
+            normalizeArray(
+                data.items ||
+                data.documentItems
+            );
+
+        items.forEach(
+            function (item) {
+                const line =
+                    (
+                        item.description ||
+                        item.name ||
+                        ''
+                    ) +
+                    '  x' +
+                    (
+                        item.quantity ||
+                        1
+                    ) +
+                    '  ' +
+                    formatMoney(
+                        item.amount ||
+                        (
+                            parseNumber(
+                                item.quantity
+                            ) *
+                            parseNumber(
+                                item.unitPrice
+                            )
+                        )
+                    );
+
+                pdf.text(
+                    safePdfText(
+                        line
+                    ),
+                    20,
+                    y
+                );
+
+                y += 7;
+
+                if (
+                    y > 275
+                ) {
+                    pdf.addPage();
+                    y = 20;
+                }
+            }
+        );
+
+        y += 5;
+
+        pdf.text(
+            safePdfText(
+                'รวมก่อนส่วนลด: ' +
+                formatMoney(
+                    data.subtotal
+                )
+            ),
+            120,
+            y
+        );
+
+        y += 7;
+
+        pdf.text(
+            safePdfText(
+                'ส่วนลด: ' +
+                formatMoney(
+                    data.discount
+                )
+            ),
+            120,
+            y
+        );
+
+        y += 7;
+
+        pdf.text(
+            safePdfText(
+                'ภาษี: ' +
+                formatMoney(
+                    data.taxAmount
+                )
+            ),
+            120,
+            y
+        );
+
+        y += 8;
+
+        pdf.setFontSize(
+            14
+        );
+
+        pdf.text(
+            safePdfText(
+                'ยอดรวม: ' +
+                formatMoney(
+                    data.total ||
+                    data.grandTotal
+                ) +
+                ' บาท'
+            ),
+            120,
+            y
+        );
+
+        pdf.save(
+            (
+                data.docNo ||
+                data.documentNo ||
+                'document'
+            ) +
+            '.pdf'
+        );
+
+        showToast(
+            'สร้าง PDF สำเร็จ',
+            'success'
+        );
+    }
+
+    function safePdfText(text) {
+        return String(
+            text || ''
+        );
+    }
+
+    function createPrintableDocumentElement(
+        data
+    ) {
+        const element =
+            document.createElement(
+                'div'
+            );
+
+        element.className =
+            'print-document';
+
+        const items =
+            normalizeArray(
+                data.items ||
+                data.documentItems
+            );
+
+        let itemsHtml = '';
+
+        items.forEach(
+            function (item, index) {
+                const quantity =
+                    parseNumber(
+                        item.quantity
+                    ) || 1;
+
+                const unitPrice =
+                    parseNumber(
+                        item.unitPrice
+                    );
+
+                const amount =
+                    parseNumber(
+                        item.amount
+                    ) ||
+                    quantity *
+                    unitPrice;
+
+                itemsHtml +=
+                    '<tr>' +
+                    '<td>' +
+                    escapeHtml(
+                        index + 1
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        item.description ||
+                        item.name ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td class="right">' +
+                    escapeHtml(
+                        formatNumber(
+                            quantity
+                        )
+                    ) +
+                    '</td>' +
+                    '<td>' +
+                    escapeHtml(
+                        item.unit ||
+                        ''
+                    ) +
+                    '</td>' +
+                    '<td class="right">' +
+                    escapeHtml(
+                        formatMoney(
+                            unitPrice
+                        )
+                    ) +
+                    '</td>' +
+                    '<td class="right">' +
+                    escapeHtml(
+                        formatMoney(
+                            amount
+                        )
+                    ) +
+                    '</td>' +
+                    '</tr>';
+            }
+        );
+
+        element.innerHTML =
+            '<div class="print-document-inner">' +
+            '<div class="print-header">' +
+            '<h1>' +
+            escapeHtml(
+                getSetting(
+                    'businessName',
+                    'กิจการ'
+                )
+            ) +
+            '</h1>' +
+            '<h2>' +
+            escapeHtml(
+                getDocumentTypeName(
+                    data.docType ||
+                    data.documentType
+                )
+            ) +
+            '</h2>' +
+            '</div>' +
+            '<div class="print-meta">' +
+            '<div><strong>เลขที่:</strong> ' +
+            escapeHtml(
+                data.docNo ||
+                data.documentNo ||
+                '-'
+            ) +
+            '</div>' +
+            '<div><strong>วันที่:</strong> ' +
+            escapeHtml(
+                formatDate(
+                    data.date
+                )
+            ) +
+            '</div>' +
+            '<div><strong>ครบกำหนด:</strong> ' +
+            escapeHtml(
+                formatDate(
+                    data.dueDate
+                )
+            ) +
+            '</div>' +
+            '<div><strong>คู่ค้า:</strong> ' +
+            escapeHtml(
+                data.partyName ||
+                data.customerName ||
+                data.vendorName ||
+                '-'
+            ) +
+            '</div>' +
+            '<div><strong>เลขประจำตัวผู้เสียภาษี:</strong> ' +
+            escapeHtml(
+                data.taxId ||
+                '-'
+            ) +
+            '</div>' +
+            '<div><strong>โทรศัพท์:</strong> ' +
+            escapeHtml(
+                data.phone ||
+                '-'
+            ) +
+            '</div>' +
+            '</div>' +
+            '<table class="print-items">' +
+            '<thead>' +
+            '<tr>' +
+            '<th>ลำดับ</th>' +
+            '<th>รายการ</th>' +
+            '<th>จำนวน</th>' +
+            '<th>หน่วย</th>' +
+            '<th>ราคา/หน่วย</th>' +
+            '<th>จำนวนเงิน</th>' +
+            '</tr>' +
+            '</thead>' +
+            '<tbody>' +
+            itemsHtml +
+            '</tbody>' +
+            '</table>' +
+            '<div class="print-totals">' +
+            '<div><span>รวมก่อนส่วนลด</span><strong>' +
+            escapeHtml(
+                formatMoney(
+                    data.subtotal
+                )
+            ) +
+            ' บาท</strong></div>' +
+            '<div><span>ส่วนลด</span><strong>' +
+            escapeHtml(
+                formatMoney(
+                    data.discount
+                )
+            ) +
+            ' บาท</strong></div>' +
+            '<div><span>ภาษี</span><strong>' +
+            escapeHtml(
+                formatMoney(
+                    data.taxAmount
+                )
+            ) +
+            ' บาท</strong></div>' +
+            '<div class="grand-total"><span>ยอดรวมสุทธิ</span><strong>' +
+            escapeHtml(
+                formatMoney(
+                    data.total ||
+                    data.grandTotal
+                )
+            ) +
+            ' บาท</strong></div>' +
+            '</div>' +
+            '<div class="print-notes">' +
+            '<strong>หมายเหตุ:</strong> ' +
+            escapeHtml(
+                data.notes ||
+                ''
+            ) +
+            '</div>' +
+            '<div class="print-signatures">' +
+            '<div>ลงชื่อ ______________________________</div>' +
+            '<div>ผู้รับ / ผู้จ่าย / ผู้มีอำนาจ</div>' +
+            '<div>วันที่ ______________________________</div>' +
+            '</div>' +
+            '</div>';
+
+        return element;
+    }
+
+    function printDocument(data) {
+        const printable =
+            createPrintableDocumentElement(
+                data
+            );
+
+        const printWindow =
+            window.open(
+                '',
+                '_blank',
+                'width=900,height=1000'
+            );
+
+        if (!printWindow) {
+            showToast(
+                'เบราว์เซอร์บล็อกหน้าต่างพิมพ์ กรุณาอนุญาต Popup',
+                'warning'
+            );
+
+            return;
+        }
+
+        printWindow.document.open();
+
+        printWindow.document.write(
+            '<!DOCTYPE html>' +
+            '<html lang="th">' +
+            '<head>' +
+            '<meta charset="UTF-8">' +
+            '<title>' +
+            escapeHtml(
+                data.docNo ||
+                data.documentNo ||
+                'document'
+            ) +
+            '</title>' +
+            '<style>' +
+            'body{font-family:"TH Sarabun New","TH Sarabun",Arial,sans-serif;font-size:18px;margin:0;padding:20px;color:#111}' +
+            '.print-document-inner{max-width:190mm;margin:auto}' +
+            '.print-header{text-align:center;margin-bottom:20px}' +
+            '.print-header h1{font-size:28px;margin:0 0 5px}' +
+            '.print-header h2{font-size:24px;margin:0}' +
+            '.print-meta{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:20px}' +
+            '.print-items{width:100%;border-collapse:collapse}' +
+            '.print-items th,.print-items td{border:1px solid #222;padding:6px}' +
+            '.print-items th{text-align:center}' +
+            '.right{text-align:right}' +
+            '.print-totals{margin-top:15px;margin-left:auto;width:75%}' +
+            '.print-totals>div{display:flex;justify-content:space-between;padding:4px 0}' +
+            '.print-totals .grand-total{font-size:22px;border-top:2px solid #111;margin-top:5px;padding-top:8px}' +
+            '.print-notes{margin-top:30px;min-height:50px}' +
+            '.print-signatures{margin-top:70px;display:flex;justify-content:space-between;text-align:center}' +
+            '@media print{body{padding:0}.print-document-inner{max-width:none}}' +
+            '</style>' +
+            '</head>' +
+            '<body>' +
+            printable.innerHTML +
+            '</body>' +
+            '</html>'
+        );
+
+        printWindow.document.close();
+
+        printWindow.focus();
+
+        window.setTimeout(
+            function () {
+                printWindow.print();
+            },
+            500
+        );
+    }
+
+    function setupLoginForm() {
+        const loginForm =
+            byId('loginForm');
+
+        if (!loginForm) {
+            console.warn(
+                'ไม่พบ #loginForm'
+            );
+
+            return;
+        }
+
+        if (
+            loginForm.dataset.appBound ===
+            'true'
+        ) {
+            return;
+        }
+
+        loginForm.dataset.appBound =
+            'true';
+
+        loginForm.addEventListener(
+            'submit',
+            handleLoginSubmit
+        );
+
+        const loginButton =
+            byId('loginButton') ||
+            loginForm.querySelector(
+                'button[type="submit"]'
+            );
+
+        if (loginButton) {
+            loginButton.type =
+                'submit';
+        }
+    }
+
+    function setupNavigation() {
+        document.addEventListener(
+            'click',
+            async function (event) {
+                const navigation =
+                    event.target.closest(
+                        '[data-page]'
                     );
 
                 if (
-                    modal &&
-                    modal.classList.contains(
-                        "show"
+                    navigation &&
+                    navigation.getAttribute(
+                        'data-page'
                     )
                 ) {
-                    closeModal();
+                    event.preventDefault();
+
+                    const page =
+                        navigation.getAttribute(
+                            'data-page'
+                        );
+
+                    await navigate(
+                        page
+                    );
+
                     return;
                 }
 
-                closeMobileSidebar();
-            }
-        }
-    );
-
-    window.addEventListener(
-        "resize",
-        function () {
-            if (
-                window.innerWidth > 900
-            ) {
-                closeMobileSidebar();
-            }
-        }
-    );
-
-    const loginForm =
-        byId(
-            "loginForm"
-        );
-
-    if (loginForm) {
-        loginForm.addEventListener(
-            "submit",
-            async function (event) {
-                event.preventDefault();
-
-                const username =
-                    valueOf(
-                        "loginUsername"
+                const actionElement =
+                    event.target.closest(
+                        '[data-action]'
                     );
 
-                const password =
-                    valueOf(
-                        "loginPassword"
-                    );
-
-                await login(
-                    username,
-                    password
-                );
-            }
-        );
-    }
-
-    const passwordToggle =
-        byId(
-            "loginPasswordToggle"
-        );
-
-    if (passwordToggle) {
-        passwordToggle.addEventListener(
-            "click",
-            function () {
-                togglePasswordVisibility(
-                    "loginPassword"
-                );
-            }
-        );
-    }
-}
-
-/* =========================================================
-   52. DOCUMENT CLICK HANDLER
-   ========================================================= */
-
-async function handleDocumentClick(
-    event
-) {
-    const target =
-        event.target.closest(
-            "[data-action]"
-        );
-
-    if (!target) {
-        return;
-    }
-
-    const action =
-        target.getAttribute(
-            "data-action"
-        );
-
-    if (!action) {
-        return;
-    }
-
-    event.preventDefault();
-
-    try {
-        switch (action) {
-
-            case "toggle-sidebar":
-                toggleSidebar();
-                break;
-
-            case "logout":
-                await logout();
-                break;
-
-            case "close-modal":
-                closeModal();
-                break;
-
-            case "new-income":
-                openIncomeModal();
-                break;
-
-            case "edit-income":
-                openIncomeModal(
-                    target.getAttribute(
-                        "data-id"
-                    )
-                );
-                break;
-
-            case "save-income":
-                await saveIncomeFromModal();
-                break;
-
-            case "delete-income":
-                await deleteEntity(
-                    "Income",
-                    target.getAttribute(
-                        "data-id"
-                    ),
-                    "รายการรายรับ"
-                );
-                break;
-
-            case "cancel-income":
-                await cancelTransaction(
-                    "cancelIncome",
-                    target.getAttribute(
-                        "data-id"
-                    )
-                );
-                break;
-
-            case "new-expense":
-                openExpenseModal();
-                break;
-
-            case "edit-expense":
-                openExpenseModal(
-                    target.getAttribute(
-                        "data-id"
-                    )
-                );
-                break;
-
-            case "save-expense":
-                await saveExpenseFromModal();
-                break;
-
-            case "delete-expense":
-                await deleteEntity(
-                    "Expense",
-                    target.getAttribute(
-                        "data-id"
-                    ),
-                    "รายการรายจ่าย"
-                );
-                break;
-
-            case "cancel-expense":
-                await cancelTransaction(
-                    "cancelExpense",
-                    target.getAttribute(
-                        "data-id"
-                    )
-                );
-                break;
-
-            case "new-transfer":
-                openTransferModal();
-                break;
-
-            case "edit-transfer":
-                openTransferModal(
-                    target.getAttribute(
-                        "data-id"
-                    )
-                );
-                break;
-
-            case "save-transfer":
-                await saveTransferFromModal();
-                break;
-
-            case "delete-transfer":
-                await deleteEntity(
-                    "Transfers",
-                    target.getAttribute(
-                        "data-id"
-                    ),
-                    "รายการโอนเงิน"
-                );
-                break;
-
-            case "new-account":
-                openAccountModal();
-                break;
-
-            case "edit-account":
-                openAccountModal(
-                    target.getAttribute(
-                        "data-id"
-                    )
-                );
-                break;
-
-            case "save-account":
-                await saveAccountFromModal();
-                break;
-
-            case "delete-account":
-                await deleteEntity(
-                    "Accounts",
-                    target.getAttribute(
-                        "data-id"
-                    ),
-                    "บัญชี"
-                );
-                break;
-
-            case "new-customer":
-                openCustomerModal();
-                break;
-
-            case "edit-customer":
-                openCustomerModal(
-                    target.getAttribute(
-                        "data-id"
-                    )
-                );
-                break;
-
-            case "save-customer":
-                await savePartyFromModal(
-                    "customer"
-                );
-                break;
-
-            case "delete-customer":
-                await deleteEntity(
-                    "Customers",
-                    target.getAttribute(
-                        "data-id"
-                    ),
-                    "ลูกค้า"
-                );
-                break;
-
-            case "new-vendor":
-                openVendorModal();
-                break;
-
-            case "edit-vendor":
-                openVendorModal(
-                    target.getAttribute(
-                        "data-id"
-                    )
-                );
-                break;
-
-            case "save-vendor":
-                await savePartyFromModal(
-                    "vendor"
-                );
-                break;
-
-            case "delete-vendor":
-                await deleteEntity(
-                    "Vendors",
-                    target.getAttribute(
-                        "data-id"
-                    ),
-                    "ผู้จำหน่าย"
-                );
-                break;
-
-            case "new-document":
-                await openDocumentModal();
-                break;
-
-            case "edit-document":
-                await openDocumentModal(
-                    target.getAttribute(
-                        "data-id"
-                    )
-                );
-                break;
-
-            case "view-document":
-                await viewDocument(
-                    target.getAttribute(
-                        "data-id"
-                    ),
-                    false
-                );
-                break;
-
-            case "print-document":
-                await viewDocument(
-                    target.getAttribute(
-                        "data-id"
-                    ),
-                    true
-                );
-                break;
-
-            case "print-current-document":
-                printCurrentOpenDocument();
-                break;
-
-            case "save-document":
-                await saveDocumentFromModal();
-                break;
-
-            case "cancel-document":
-                await cancelDocument(
-                    target.getAttribute(
-                        "data-id"
-                    )
-                );
-                break;
-
-            case "add-document-item":
-                addDocumentItem();
-                break;
-
-            case "remove-document-item":
-                removeDocumentItem(
-                    Number(
-                        target.getAttribute(
-                            "data-index"
-                        )
-                    )
-                );
-                break;
-
-            case "new-user":
-                openUserModal();
-                break;
-
-            case "edit-user":
-                openUserModal(
-                    target.getAttribute(
-                        "data-id"
-                    )
-                );
-                break;
-
-            case "save-user":
-                await saveUserFromModal();
-                break;
-
-            case "delete-user":
-                await deleteEntity(
-                    "Users",
-                    target.getAttribute(
-                        "data-id"
-                    ),
-                    "ผู้ใช้งาน"
-                );
-                break;
-
-            case "save-business-settings":
-                await saveBusinessSettings();
-                break;
-
-            case "save-document-settings":
-                await saveDocumentSettings();
-                break;
-
-            case "filter-incomes":
-                await applyIncomeFilter();
-                break;
-
-            case "clear-income-filter":
-                await clearIncomeFilter();
-                break;
-
-            case "filter-expenses":
-                await applyExpenseFilter();
-                break;
-
-            case "clear-expense-filter":
-                await clearExpenseFilter();
-                break;
-
-            case "filter-customers":
-                await applyCustomerFilter();
-                break;
-
-            case "clear-customer-filter":
-                await clearCustomerFilter();
-                break;
-
-            case "filter-vendors":
-                await applyVendorFilter();
-                break;
-
-            case "clear-vendor-filter":
-                await clearVendorFilter();
-                break;
-
-            case "filter-documents":
-                await applyDocumentFilter();
-                break;
-
-            case "clear-document-filter":
-                await clearDocumentFilter();
-                break;
-
-            case "filter-report":
-                await applyReportFilter();
-                break;
-
-            case "print-report":
-                printCurrentPage();
-                break;
-
-            case "refresh-dashboard":
-                await navigateTo(
-                    "dashboard"
-                );
-                break;
-
-            case "view-incomes":
-                await navigateTo(
-                    "incomes"
-                );
-                break;
-
-            case "page":
-                await changePage(
-                    target.getAttribute(
-                        "data-entity"
-                    ),
-                    Number(
-                        target.getAttribute(
-                            "data-page"
-                        )
-                    )
-                );
-                break;
-
-            case "close-mobile-sidebar":
-                closeMobileSidebar();
-                break;
-
-            default:
                 if (
-                    PAGE_TITLES[
-                        action
-                    ]
+                    !actionElement
                 ) {
-                    await navigateTo(
-                        action
+                    return;
+                }
+
+                const action =
+                    actionElement.getAttribute(
+                        'data-action'
+                    );
+
+                if (
+                    action ===
+                    'logout'
+                ) {
+                    event.preventDefault();
+                    await logout();
+                    return;
+                }
+
+                if (
+                    action ===
+                    'toggle-sidebar'
+                ) {
+                    event.preventDefault();
+                    toggleSidebar();
+                    return;
+                }
+
+                if (
+                    action ===
+                    'refresh-dashboard'
+                ) {
+                    event.preventDefault();
+                    await renderDashboard();
+                    return;
+                }
+
+                if (
+                    action ===
+                    'create'
+                ) {
+                    event.preventDefault();
+
+                    const entity =
+                        actionElement.getAttribute(
+                            'data-entity'
+                        );
+
+                    await openCreateModal(
+                        entity
+                    );
+
+                    return;
+                }
+
+                if (
+                    action ===
+                    'edit'
+                ) {
+                    event.preventDefault();
+
+                    const entity =
+                        actionElement.getAttribute(
+                            'data-entity'
+                        );
+
+                    const id =
+                        actionElement.getAttribute(
+                            'data-id'
+                        );
+
+                    await openEditModal(
+                        entity,
+                        id
+                    );
+
+                    return;
+                }
+
+                if (
+                    action ===
+                    'delete'
+                ) {
+                    event.preventDefault();
+
+                    const entity =
+                        actionElement.getAttribute(
+                            'data-entity'
+                        );
+
+                    const id =
+                        actionElement.getAttribute(
+                            'data-id'
+                        );
+
+                    await deleteEntity(
+                        entity,
+                        id
+                    );
+
+                    return;
+                }
+
+                if (
+                    action ===
+                    'apply-filter'
+                ) {
+                    event.preventDefault();
+
+                    const entity =
+                        actionElement.getAttribute(
+                            'data-entity'
+                        );
+
+                    await applyFilter(
+                        entity
+                    );
+
+                    return;
+                }
+
+                if (
+                    action ===
+                    'clear-filter'
+                ) {
+                    event.preventDefault();
+
+                    const entity =
+                        actionElement.getAttribute(
+                            'data-entity'
+                        );
+
+                    await clearFilter(
+                        entity
+                    );
+
+                    return;
+                }
+
+                if (
+                    action ===
+                    'page'
+                ) {
+                    event.preventDefault();
+
+                    const entity =
+                        actionElement.getAttribute(
+                            'data-entity'
+                        );
+
+                    const pageNumber =
+                        parseInt(
+                            actionElement.getAttribute(
+                                'data-page-number'
+                            ),
+                            10
+                        );
+
+                    await loadEntityRows(
+                        entity,
+                        pageNumber
+                    );
+
+                    return;
+                }
+
+                if (
+                    action ===
+                    'view-document'
+                ) {
+                    event.preventDefault();
+
+                    const id =
+                        actionElement.getAttribute(
+                            'data-id'
+                        );
+
+                    await viewDocument(
+                        id
+                    );
+
+                    return;
+                }
+
+                if (
+                    action ===
+                    'pdf-document'
+                ) {
+                    event.preventDefault();
+
+                    const id =
+                        actionElement.getAttribute(
+                            'data-id'
+                        );
+
+                    await downloadDocumentPdf(
+                        id
+                    );
+
+                    return;
+                }
+
+                if (
+                    action ===
+                    'cancel-document'
+                ) {
+                    event.preventDefault();
+
+                    const id =
+                        actionElement.getAttribute(
+                            'data-id'
+                        );
+
+                    await cancelDocument(
+                        id
+                    );
+
+                    return;
+                }
+
+                if (
+                    action ===
+                    'cancel-income'
+                ) {
+                    event.preventDefault();
+
+                    const id =
+                        actionElement.getAttribute(
+                            'data-id'
+                        );
+
+                    await cancelTransaction(
+                        'income',
+                        id
+                    );
+
+                    return;
+                }
+
+                if (
+                    action ===
+                    'cancel-expense'
+                ) {
+                    event.preventDefault();
+
+                    const id =
+                        actionElement.getAttribute(
+                            'data-id'
+                        );
+
+                    await cancelTransaction(
+                        'expense',
+                        id
+                    );
+
+                    return;
+                }
+
+                if (
+                    action ===
+                    'add-document-item'
+                ) {
+                    event.preventDefault();
+
+                    addDocumentItem();
+
+                    return;
+                }
+
+                if (
+                    action ===
+                    'remove-document-item'
+                ) {
+                    event.preventDefault();
+
+                    const index =
+                        actionElement.getAttribute(
+                            'data-index'
+                        );
+
+                    removeDocumentItem(
+                        index
+                    );
+
+                    return;
+                }
+
+                if (
+                    action ===
+                    'run-report'
+                ) {
+                    event.preventDefault();
+
+                    await runReport();
+
+                    return;
+                }
+
+                if (
+                    action ===
+                    'export-report'
+                ) {
+                    event.preventDefault();
+
+                    await exportReport();
+
+                    return;
+                }
+
+                if (
+                    action ===
+                    'export-entity'
+                ) {
+                    event.preventDefault();
+
+                    const entity =
+                        actionElement.getAttribute(
+                            'data-entity'
+                        );
+
+                    await exportCurrentEntity(
+                        entity
+                    );
+
+                    return;
+                }
+
+                if (
+                    action ===
+                    'refresh-auditlogs' ||
+                    action ===
+                    'load-auditlogs'
+                ) {
+                    event.preventDefault();
+
+                    await loadAuditLogs();
+
+                    return;
+                }
+
+                if (
+                    action ===
+                    'create-setting'
+                ) {
+                    event.preventDefault();
+
+                    openSettingModal(
+                        ''
+                    );
+
+                    return;
+                }
+
+                if (
+                    action ===
+                    'edit-setting'
+                ) {
+                    event.preventDefault();
+
+                    const key =
+                        actionElement.getAttribute(
+                            'data-key'
+                        );
+
+                    openSettingModal(
+                        key
+                    );
+
+                    return;
+                }
+            }
+        );
+    }
+
+    function setupGlobalEvents() {
+        document.addEventListener(
+            'input',
+            function (event) {
+                const element =
+                    event.target;
+
+                if (
+                    element &&
+                    element.matches(
+                        '[data-item-field]'
+                    )
+                ) {
+                    updateDocumentItemInput(
+                        element
                     );
                 }
+
+                if (
+                    element &&
+                    (
+                        element.id ===
+                        'field-discount' ||
+                        element.id ===
+                        'field-taxRate'
+                    )
+                ) {
+                    updateDocumentTotalsFromEditor();
+                }
+            }
+        );
+
+        document.addEventListener(
+            'keydown',
+            function (event) {
+                if (
+                    event.key ===
+                    'Escape'
+                ) {
+                    const modal =
+                        byId(
+                            'modalContainer'
+                        );
+
+                    if (
+                        modal &&
+                        modal.classList.contains(
+                            'open'
+                        )
+                    ) {
+                        closeModal();
+                    }
+                }
+
+                if (
+                    event.ctrlKey &&
+                    event.key.toLowerCase() ===
+                    'k'
+                ) {
+                    const search =
+                        byId(
+                            'globalSearch'
+                        );
+
+                    if (search) {
+                        event.preventDefault();
+                        search.focus();
+                    }
+                }
+            }
+        );
+
+        window.addEventListener(
+            'resize',
+            debounce(
+                function () {
+                    if (
+                        window.innerWidth >
+                        900
+                    ) {
+                        closeSidebarMobile();
+                    }
+                },
+                150
+            )
+        );
+    }
+
+    function setupGlobalSearch() {
+        const search =
+            byId(
+                'globalSearch'
+            );
+
+        if (!search) {
+            return;
         }
 
-        if (
-            target.hasAttribute(
-                "data-settings-tab"
+        search.addEventListener(
+            'input',
+            debounce(
+                function () {
+                    const keyword =
+                        search.value.trim();
+
+                    if (
+                        keyword.length <
+                        2
+                    ) {
+                        return;
+                    }
+
+                    performGlobalSearch(
+                        keyword
+                    );
+                },
+                500
             )
-        ) {
-            activateSettingsTab(
-                target.getAttribute(
-                    "data-settings-tab"
+        );
+    }
+
+    async function performGlobalSearch(
+        keyword
+    ) {
+        if (!state.token) {
+            return;
+        }
+
+        try {
+            const response =
+                await apiRequest(
+                    'list',
+                    {
+                        entity:
+                            'search',
+                        search:
+                            keyword,
+                        page:
+                            1,
+                        pageSize:
+                            10
+                    }
+                );
+
+            const data =
+                unwrapResponse(
+                    response
+                );
+
+            renderSearchResults(
+                normalizeArray(
+                    data
                 )
             );
+        } catch (error) {
+            console.warn(
+                'Global search error:',
+                error
+            );
         }
-    } catch (error) {
-        handleApiError(error);
     }
-}
 
-/* =========================================================
-   53. NAVIGATION CLICK SUPPORT
-   ========================================================= */
-
-document.addEventListener(
-    "click",
-    async function (event) {
-        const nav =
-            event.target.closest(
-                "[data-page]"
+    function renderSearchResults(rows) {
+        let container =
+            byId(
+                'globalSearchResults'
             );
 
-        if (!nav) {
+        if (!container) {
+            container =
+                document.createElement(
+                    'div'
+                );
+
+            container.id =
+                'globalSearchResults';
+
+            container.className =
+                'global-search-results';
+
+            const search =
+                byId(
+                    'globalSearch'
+                );
+
+            if (
+                search &&
+                search.parentNode
+            ) {
+                search.parentNode.appendChild(
+                    container
+                );
+            }
+        }
+
+        if (!rows.length) {
+            container.innerHTML =
+                '<div class="search-empty">ไม่พบข้อมูล</div>';
+
             return;
         }
 
-        if (
-            nav.hasAttribute(
-                "data-settings-tab"
-            )
-        ) {
-            return;
-        }
+        let html = '';
 
-        const page =
-            nav.getAttribute(
-                "data-page"
-            );
-
-        if (!page) {
-            return;
-        }
-
-        event.preventDefault();
-
-        await navigateTo(
-            page
-        );
-    }
-);
-
-/* =========================================================
-   54. SETTINGS TAB SUPPORT
-   ========================================================= */
-
-document.addEventListener(
-    "click",
-    function (event) {
-        const tab =
-            event.target.closest(
-                "[data-settings-tab]"
-            );
-
-        if (!tab) {
-            return;
-        }
-
-        event.preventDefault();
-
-        activateSettingsTab(
-            tab.getAttribute(
-                "data-settings-tab"
-            )
-        );
-    }
-);
-
-/* =========================================================
-   55. DOCUMENT ITEMS
-   ========================================================= */
-
-function addDocumentItem() {
-    AppState.documentItems.push(
-        createDocumentItem()
-    );
-
-    renderDocumentItems();
-
-    calculateDocumentTotals();
-}
-
-function removeDocumentItem(
-    index
-) {
-    if (
-        index < 0 ||
-        index >=
-            AppState.documentItems.length
-    ) {
-        return;
-    }
-
-    if (
-        AppState.documentItems.length <= 1
-    ) {
-        showToast(
-            "ไม่สามารถลบได้",
-            "เอกสารต้องมีรายการอย่างน้อย 1 รายการ",
-            "warning"
-        );
-
-        return;
-    }
-
-    AppState.documentItems.splice(
-        index,
-        1
-    );
-
-    AppState.documentItems.forEach(
-        function (item, currentIndex) {
-            item.lineNo =
-                currentIndex + 1;
-        }
-    );
-
-    renderDocumentItems();
-
-    calculateDocumentTotals();
-}
-
-/* =========================================================
-   56. TRANSACTION CANCEL
-   ========================================================= */
-
-async function cancelTransaction(
-    action,
-    id
-) {
-    const confirmed =
-        await confirmAction(
-            "ยืนยันการยกเลิก",
-            "ต้องการยกเลิกรายการนี้หรือไม่?"
-        );
-
-    if (!confirmed) {
-        return;
-    }
-
-    showLoading(
-        "กำลังยกเลิกรายการ..."
-    );
-
-    try {
-        await apiRequest(
-            action,
-            {
-                id: id
+        rows.forEach(
+            function (row) {
+                html +=
+                    '<button type="button" class="search-result-item" data-action="search-result" data-id="' +
+                    escapeHtml(
+                        row.id ||
+                        ''
+                    ) +
+                    '">' +
+                    '<strong>' +
+                    escapeHtml(
+                        row.name ||
+                        row.docNo ||
+                        row.description ||
+                        ''
+                    ) +
+                    '</strong>' +
+                    '<span>' +
+                    escapeHtml(
+                        row.type ||
+                        row.entity ||
+                        ''
+                    ) +
+                    '</span>' +
+                    '</button>';
             }
         );
 
-        showToast(
-            "ดำเนินการสำเร็จ",
-            "ยกเลิกรายการเรียบร้อยแล้ว",
-            "success"
+        container.innerHTML =
+            html;
+    }
+
+    function setupFormSubmitProtection() {
+        const forms =
+            $$('form');
+
+        forms.forEach(
+            function (form) {
+                if (
+                    form.id ===
+                    'loginForm'
+                ) {
+                    return;
+                }
+
+                form.addEventListener(
+                    'submit',
+                    function (event) {
+                        if (
+                            form.hasAttribute(
+                                'data-native-submit'
+                            )
+                        ) {
+                            return;
+                        }
+
+                        if (
+                            form.closest(
+                                '#modalContainer'
+                            )
+                        ) {
+                            return;
+                        }
+
+                        if (
+                            form.getAttribute(
+                                'action'
+                            ) ===
+                            ''
+                        ) {
+                            event.preventDefault();
+                        }
+                    }
+                );
+            }
         );
+    }
+
+    function restoreCurrentPage() {
+        const stored =
+            getStorage(
+                'elaas_private_finance_current_page'
+            );
 
         if (
-            action === "cancelIncome"
+            stored &&
+            PAGE_CONFIG[stored]
         ) {
-            await navigateTo(
-                "incomes"
-            );
+            state.currentPage =
+                stored;
         } else {
-            await navigateTo(
-                "expenses"
-            );
+            state.currentPage =
+                'dashboard';
         }
-    } catch (error) {
-        handleApiError(error);
-    } finally {
-        hideLoading();
-    }
-}
-
-/* =========================================================
-   57. PRINT CURRENT DOCUMENT
-   ========================================================= */
-
-function printCurrentOpenDocument() {
-    const preview =
-        byId(
-            "currentDocumentPreview"
-        );
-
-    if (!preview) {
-        showToast(
-            "ไม่พบเอกสาร",
-            "ไม่พบข้อมูลเอกสารสำหรับพิมพ์",
-            "warning"
-        );
-
-        return;
     }
 
-    const printWindow =
-        window.open(
-            "",
-            "_blank"
-        );
+    async function pingServer() {
+        try {
+            const response =
+                await apiRequest(
+                    'ping',
+                    {}
+                );
 
-    if (!printWindow) {
-        showToast(
-            "ไม่สามารถเปิดหน้าพิมพ์",
-            "กรุณาอนุญาต Pop-up สำหรับเว็บไซต์นี้",
-            "warning"
-        );
+            return !!response;
+        } catch (error) {
+            console.warn(
+                'Ping failed:',
+                error
+            );
 
-        return;
+            return false;
+        }
     }
 
-    printWindow.document.open();
+    function setupApiStatus() {
+        const status =
+            byId(
+                'apiStatus'
+            );
 
-    printWindow.document.write(
-        `
-        <!DOCTYPE html>
+        if (!status) {
+            return;
+        }
 
-        <html lang="th">
+        if (!isConfiguredApi()) {
+            status.textContent =
+                'ยังไม่ได้ตั้งค่า API';
 
-        <head>
+            status.classList.add(
+                'error'
+            );
 
-            <meta charset="UTF-8">
+            return;
+        }
 
-            <title>
-                ${escapeHTML(
-                    AppState.documents &&
-                    AppState.documents.length
-                        ? "Document"
-                        : APP_CONFIG.APP_NAME
-                )}
-            </title>
+        status.textContent =
+            'กำลังตรวจสอบระบบ...';
 
-            <style>
+        pingServer()
+            .then(
+                function (online) {
+                    if (online) {
+                        status.textContent =
+                            'เชื่อมต่อระบบแล้ว';
 
-                @page {
-                    size: A4;
-                    margin: 0;
+                        status.classList.remove(
+                            'error'
+                        );
+
+                        status.classList.add(
+                            'online'
+                        );
+                    } else {
+                        status.textContent =
+                            'เชื่อมต่อไม่ได้';
+
+                        status.classList.add(
+                            'error'
+                        );
+                    }
                 }
-
-                body {
-                    margin: 0;
-                    background: #ffffff;
-                    font-family:
-                        "TH Sarabun New",
-                        "TH Sarabun",
-                        Tahoma,
-                        Arial,
-                        sans-serif;
-                }
-
-                .document-preview {
-                    width: 210mm;
-                    min-height: 297mm;
-                    margin: 0 auto;
-                    padding: 15mm;
-                }
-
-            </style>
-
-        </head>
-
-        <body>
-
-            ${preview.outerHTML}
-
-            <script>
-                window.onload = function () {
-                    window.print();
-
-                    setTimeout(
-                        function () {
-                            window.close();
-                        },
-                        500
-                    );
-                };
-            <\/script>
-
-        </body>
-
-        </html>
-        `
-    );
-
-    printWindow.document.close();
-}
-
-/* =========================================================
-   58. PRINT CURRENT PAGE
-   ========================================================= */
-
-function printCurrentPage() {
-    window.print();
-}
-
-/* =========================================================
-   59. PASSWORD
-   ========================================================= */
-
-function togglePasswordVisibility(
-    id
-) {
-    const input =
-        byId(id);
-
-    if (!input) {
-        return;
+            );
     }
+
+    async function init() {
+        if (
+            state.initialized
+        ) {
+            return;
+        }
+
+        state.initialized =
+            true;
+
+        restoreCurrentPage();
+
+        setupLoginForm();
+        setupNavigation();
+        setupGlobalEvents();
+        setupGlobalSearch();
+        setupFormSubmitProtection();
+
+        if (
+            !isConfiguredApi()
+        ) {
+            showLogin();
+            setupApiStatus();
+
+            console.warn(
+                'กรุณาตั้งค่า CONFIG.API_URL ใน app.js'
+            );
+
+            return;
+        }
+
+        setupApiStatus();
+
+        const restored =
+            await restoreSession();
+
+        if (!restored) {
+            showLogin();
+        }
+    }
+
+    window.App = {
+        config:
+            CONFIG,
+
+        state:
+            state,
+
+        login:
+            login,
+
+        logout:
+            logout,
+
+        navigate:
+            navigate,
+
+        apiRequest:
+            apiRequest,
+
+        loadBootstrap:
+            loadBootstrap,
+
+        openModal:
+            openModal,
+
+        closeModal:
+            closeModal,
+
+        showToast:
+            showToast,
+
+        exportXlsx:
+            exportXlsx,
+
+        downloadDocumentPdf:
+            downloadDocumentPdf,
+
+        renderDashboard:
+            renderDashboard,
+
+        runReport:
+            runReport,
+
+        clearSession:
+            clearSession
+    };
 
     if (
-        input.type === "password"
+        document.readyState ===
+        'loading'
     ) {
-        input.type = "text";
-    } else {
-        input.type = "password";
-    }
-}
-
-/* =========================================================
-   60. API PING
-   ========================================================= */
-
-async function pingServer() {
-    updateConnectionStatus(
-        "connecting"
-    );
-
-    try {
-        await apiRequest(
-            "ping",
-            {},
+        document.addEventListener(
+            'DOMContentLoaded',
+            init,
             {
-                timeout: 10000
+                once: true
             }
         );
-
-        updateConnectionStatus(
-            "online"
-        );
-
-        return true;
-    } catch (error) {
-        updateConnectionStatus(
-            "offline"
-        );
-
-        return false;
+    } else {
+        init();
     }
-}
-
-/* =========================================================
-   61. INITIAL APP START
-   ========================================================= */
-
-if (
-    document.readyState ===
-    "loading"
-) {
-    document.addEventListener(
-        "DOMContentLoaded",
-        initializeApp
-    );
-} else {
-    initializeApp();
-}
-
-/* =========================================================
-   62. GLOBAL EXPORTS
-   ========================================================= */
-
-window.AppState =
-    AppState;
-
-window.APP_CONFIG =
-    APP_CONFIG;
-
-window.navigateTo =
-    navigateTo;
-
-window.login =
-    login;
-
-window.logout =
-    logout;
-
-window.showToast =
-    showToast;
-
-window.openIncomeModal =
-    openIncomeModal;
-
-window.openExpenseModal =
-    openExpenseModal;
-
-window.openTransferModal =
-    openTransferModal;
-
-window.openAccountModal =
-    openAccountModal;
-
-window.openCustomerModal =
-    openCustomerModal;
-
-window.openVendorModal =
-    openVendorModal;
-
-window.openUserModal =
-    openUserModal;
-
-window.openDocumentModal =
-    openDocumentModal;
-
-window.viewDocument =
-    viewDocument;
-
-window.closeModal =
-    closeModal;
-
-window.toggleSidebar =
-    toggleSidebar;
-
-window.printCurrentPage =
-    printCurrentPage;
-
-window.pingServer =
-    pingServer;
-
-/* =========================================================
-   63. END OF APP.JS
-   ========================================================= */
+})();
