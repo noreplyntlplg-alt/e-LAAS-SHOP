@@ -1,464 +1,191 @@
 (function () {
-    'use strict';
+    "use strict";
 
-    const CONFIG = {
-        API_URL: 'https://script.google.com/macros/s/AKfycbw8gnDcBxWV8W-RFRvi1e-yZmpa03O3P8M2iX-QAAB93TLZDQHO_8qAPInSghM9mtZm/exec',
-        APP_NAME: 'e-LAAS Private Finance',
-        SESSION_KEY: 'elaas_private_finance_session',
-        USER_KEY: 'elaas_private_finance_user',
-        SETTINGS_KEY: 'elaas_private_finance_settings',
-        LOCALE: 'th-TH',
-        CURRENCY: 'THB',
-        REQUEST_TIMEOUT: 30000
+    var CONFIG = {
+        API_URL: "https://script.google.com/macros/s/AKfycbw8gnDcBxWV8W-RFRvi1e-yZmpa03O3P8M2iX-QAAB93TLZDQHO_8qAPInSghM9mtZm/exec",
+        SESSION_KEY: "privateFinanceSessionToken",
+        USER_KEY: "privateFinanceCurrentUser",
+        EXPIRES_KEY: "privateFinanceSessionExpiresAt",
+        APP_NAME: "e-LAAS Private Finance",
+        REQUEST_TIMEOUT: 30000,
+        LOCALE: "th-TH",
+        CURRENCY: "THB"
     };
 
-    const state = {
-        token: '',
+    if (window.APP_CONFIG && typeof window.APP_CONFIG === "object") {
+        if (window.APP_CONFIG.API_URL) {
+            CONFIG.API_URL = String(window.APP_CONFIG.API_URL);
+        }
+    }
+
+    if (!CONFIG.API_URL) {
+        var apiElement = document.querySelector("[data-api-url]");
+        if (apiElement) {
+            CONFIG.API_URL = apiElement.getAttribute("data-api-url") || "";
+        }
+    }
+
+    var state = {
+        token: "",
         user: null,
-        settings: {},
+        expiresAt: "",
+        bootstrap: null,
+        settings: [],
         accounts: [],
         categories: [],
         customers: [],
         vendors: [],
         users: [],
-        documentTypes: [],
-        currentPage: 'dashboard',
-        currentEntity: '',
-        currentRows: [],
-        currentPageNumber: 1,
-        pageSize: 20,
-        totalRows: 0,
-        filters: {},
-        editingId: '',
-        currentModal: null,
-        initialized: false,
+        documents: [],
+        currentPage: "dashboard",
+        currentEntity: "",
+        currentData: [],
+        currentRecord: null,
+        editingId: "",
+        loginInProgress: false,
         loading: false,
+        initialized: false,
         dashboardData: null,
         reportData: null,
-        currentDocument: null,
-        currentDocumentItems: [],
-        chartInstances: {},
-        searchTimer: null
+        modalOpen: false,
+        modalSubmitHandler: null,
+        filters: {},
+        pageCache: {},
+        charts: {},
+        documentItems: []
     };
 
-    const DOCUMENT_TYPES = [
+    var PAGE_NAMES = {
+        dashboard: "แดชบอร์ด",
+        income: "รายรับ",
+        expense: "รายจ่าย",
+        transfers: "โอนเงินระหว่างบัญชี",
+        accounts: "เงินสด / ธนาคาร",
+        customers: "ลูกค้า",
+        vendors: "ผู้จำหน่าย / เจ้าหนี้",
+        documents: "ทะเบียนเอกสาร",
+        users: "ผู้ใช้งานและสิทธิ์",
+        settings: "ตั้งค่ากิจการ",
+        auditlogs: "Audit Log",
+        reports: "รายงาน"
+    };
+
+    var DOCUMENT_TYPES = [
         {
-            code: 'QUOTATION',
-            name: 'ใบเสนอราคา'
+            value: "quotation",
+            label: "ใบเสนอราคา"
         },
         {
-            code: 'INVOICE',
-            name: 'ใบแจ้งหนี้'
+            value: "invoice",
+            label: "ใบแจ้งหนี้"
         },
         {
-            code: 'BILLING',
-            name: 'ใบวางบิล'
+            value: "billing",
+            label: "ใบวางบิล"
         },
         {
-            code: 'RECEIPT',
-            name: 'ใบเสร็จรับเงิน'
+            value: "receipt",
+            label: "ใบเสร็จรับเงิน"
         },
         {
-            code: 'RECEIVE',
-            name: 'ใบรับเงิน'
+            value: "receipt_payment",
+            label: "ใบรับเงิน"
         },
         {
-            code: 'RECEIVE_VOUCHER',
-            name: 'ใบสำคัญรับ'
+            value: "receipt_voucher",
+            label: "ใบสำคัญรับ"
         },
         {
-            code: 'PAYMENT_VOUCHER',
-            name: 'ใบสำคัญจ่าย'
+            value: "payment_voucher",
+            label: "ใบสำคัญจ่าย"
         },
         {
-            code: 'PAYMENT_CERTIFICATE',
-            name: 'หนังสือรับรองการจ่ายเงิน'
+            value: "payment_certificate",
+            label: "หนังสือรับรองการจ่ายเงิน"
         },
         {
-            code: 'OTHER',
-            name: 'อื่น ๆ'
+            value: "other",
+            label: "อื่น ๆ"
         }
     ];
 
-    const PAGE_CONFIG = {
-        dashboard: {
-            title: 'แดชบอร์ด',
-            subtitle: 'ภาพรวมข้อมูลทางการเงินของกิจการ'
+    var PAYMENT_METHODS = [
+        {
+            value: "cash",
+            label: "เงินสด"
         },
-        income: {
-            title: 'รายรับ',
-            subtitle: 'จัดการรายการรายรับของกิจการ'
+        {
+            value: "bank",
+            label: "ธนาคาร"
         },
-        expense: {
-            title: 'รายจ่าย',
-            subtitle: 'จัดการรายการรายจ่ายของกิจการ'
+        {
+            value: "transfer",
+            label: "โอนเงิน"
         },
-        transfers: {
-            title: 'โอนเงินระหว่างบัญชี',
-            subtitle: 'บันทึกการโอนเงินระหว่างบัญชี'
+        {
+            value: "credit",
+            label: "เครดิต"
         },
-        accounts: {
-            title: 'เงินสด / ธนาคาร',
-            subtitle: 'จัดการบัญชีเงินสดและบัญชีธนาคาร'
-        },
-        categories: {
-            title: 'หมวดหมู่',
-            subtitle: 'จัดการหมวดหมู่รายรับและรายจ่าย'
-        },
-        customers: {
-            title: 'ลูกค้า',
-            subtitle: 'จัดการข้อมูลลูกค้า'
-        },
-        vendors: {
-            title: 'ผู้จำหน่าย / เจ้าหนี้',
-            subtitle: 'จัดการข้อมูลผู้จำหน่ายและเจ้าหนี้'
-        },
-        documents: {
-            title: 'ทะเบียนเอกสาร',
-            subtitle: 'จัดการเอกสารทางธุรกิจและการเงิน'
-        },
-        reports: {
-            title: 'รายงาน',
-            subtitle: 'รายงานข้อมูลทางการเงิน'
-        },
-        users: {
-            title: 'ผู้ใช้งานและสิทธิ์',
-            subtitle: 'จัดการผู้ใช้งานและสิทธิ์การใช้งาน'
-        },
-        settings: {
-            title: 'ตั้งค่ากิจการ',
-            subtitle: 'ตั้งค่าระบบและข้อมูลกิจการ'
-        },
-        auditlogs: {
-            title: 'Audit Log',
-            subtitle: 'ประวัติการทำรายการในระบบ'
+        {
+            value: "other",
+            label: "อื่น ๆ"
         }
-    };
+    ];
 
-    const ENTITY_CONFIG = {
-        income: {
-            sheet: 'Income',
-            action: 'list',
-            title: 'รายรับ',
-            createAction: 'saveincome',
-            type: 'income'
+    var ACCOUNT_TYPES = [
+        {
+            value: "cash",
+            label: "เงินสด"
         },
-        expense: {
-            sheet: 'Expenses',
-            action: 'list',
-            title: 'รายจ่าย',
-            createAction: 'saveexpense',
-            type: 'expense'
+        {
+            value: "bank",
+            label: "ธนาคาร"
         },
-        transfers: {
-            sheet: 'Transfers',
-            action: 'list',
-            title: 'โอนเงิน',
-            createAction: 'savetransfer',
-            type: 'transfer'
+        {
+            value: "wallet",
+            label: "กระเป๋าเงิน / E-Wallet"
         },
-        accounts: {
-            sheet: 'Accounts',
-            action: 'list',
-            title: 'บัญชี',
-            createAction: 'create',
-            updateAction: 'update',
-            deleteAction: 'delete',
-            type: 'accounts'
-        },
-        categories: {
-            sheet: 'Categories',
-            action: 'list',
-            title: 'หมวดหมู่',
-            createAction: 'create',
-            updateAction: 'update',
-            deleteAction: 'delete',
-            type: 'categories'
-        },
-        customers: {
-            sheet: 'Customers',
-            action: 'list',
-            title: 'ลูกค้า',
-            createAction: 'create',
-            updateAction: 'update',
-            deleteAction: 'delete',
-            type: 'customers'
-        },
-        vendors: {
-            sheet: 'Customers/Vendors',
-            action: 'list',
-            title: 'ผู้จำหน่าย',
-            createAction: 'create',
-            updateAction: 'update',
-            deleteAction: 'delete',
-            type: 'vendors'
-        },
-        documents: {
-            sheet: 'Documents',
-            action: 'list',
-            title: 'เอกสาร',
-            createAction: 'savedocument',
-            type: 'documents'
-        },
-        users: {
-            sheet: 'Users',
-            action: 'list',
-            title: 'ผู้ใช้งาน',
-            createAction: 'create',
-            updateAction: 'update',
-            deleteAction: 'delete',
-            type: 'users'
+        {
+            value: "other",
+            label: "อื่น ๆ"
         }
-    };
+    ];
 
-    function $(selector, parent) {
-        const root = parent || document;
-        return root.querySelector(selector);
-    }
-
-    function $$(selector, parent) {
-        const root = parent || document;
-        return Array.prototype.slice.call(root.querySelectorAll(selector));
-    }
+    var USER_ROLES = [
+        {
+            value: "admin",
+            label: "ผู้ดูแลระบบ"
+        },
+        {
+            value: "manager",
+            label: "ผู้จัดการ"
+        },
+        {
+            value: "staff",
+            label: "เจ้าหน้าที่"
+        },
+        {
+            value: "viewer",
+            label: "ดูข้อมูล"
+        }
+    ];
 
     function byId(id) {
         return document.getElementById(id);
     }
 
+    function qs(selector, root) {
+        var scope = root || document;
+        return scope.querySelector(selector);
+    }
+
+    function qsa(selector, root) {
+        var scope = root || document;
+        return Array.prototype.slice.call(scope.querySelectorAll(selector));
+    }
+
     function hasElement(id) {
         return !!byId(id);
-    }
-
-    function escapeHtml(value) {
-        if (value === null || value === undefined) {
-            return '';
-        }
-
-        return String(value)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;');
-    }
-
-    function safeText(value) {
-        if (value === null || value === undefined) {
-            return '';
-        }
-
-        return String(value);
-    }
-
-    function parseNumber(value) {
-        if (value === null || value === undefined || value === '') {
-            return 0;
-        }
-
-        if (typeof value === 'number') {
-            return Number.isFinite(value) ? value : 0;
-        }
-
-        const normalized = String(value)
-            .replace(/,/g, '')
-            .replace(/[^\d.-]/g, '');
-
-        const number = Number(normalized);
-
-        return Number.isFinite(number) ? number : 0;
-    }
-
-    function formatMoney(value) {
-        const amount = parseNumber(value);
-
-        return new Intl.NumberFormat(CONFIG.LOCALE, {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2
-        }).format(amount);
-    }
-
-    function formatNumber(value) {
-        const amount = parseNumber(value);
-
-        return new Intl.NumberFormat(CONFIG.LOCALE, {
-            maximumFractionDigits: 2
-        }).format(amount);
-    }
-
-    function formatMoneyWithCurrency(value) {
-        return formatMoney(value) + ' บาท';
-    }
-
-    function formatDate(value) {
-        if (!value) {
-            return '';
-        }
-
-        const date = new Date(value);
-
-        if (Number.isNaN(date.getTime())) {
-            return safeText(value);
-        }
-
-        return new Intl.DateTimeFormat(CONFIG.LOCALE, {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric'
-        }).format(date);
-    }
-
-    function formatDateTime(value) {
-        if (!value) {
-            return '';
-        }
-
-        const date = new Date(value);
-
-        if (Number.isNaN(date.getTime())) {
-            return safeText(value);
-        }
-
-        return new Intl.DateTimeFormat(CONFIG.LOCALE, {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-        }).format(date);
-    }
-
-    function toInputDate(value) {
-        if (!value) {
-            const now = new Date();
-            const year = now.getFullYear();
-            const month = String(now.getMonth() + 1).padStart(2, '0');
-            const day = String(now.getDate()).padStart(2, '0');
-
-            return year + '-' + month + '-' + day;
-        }
-
-        if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) {
-            return String(value);
-        }
-
-        const date = new Date(value);
-
-        if (Number.isNaN(date.getTime())) {
-            return '';
-        }
-
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-
-        return year + '-' + month + '-' + day;
-    }
-
-    function nowIso() {
-        return new Date().toISOString();
-    }
-
-    function generateId() {
-        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
-            return window.crypto.randomUUID();
-        }
-
-        const timestamp = Date.now().toString(36);
-        const random = Math.random().toString(36).substring(2, 12);
-
-        return timestamp + '-' + random;
-    }
-
-    function debounce(callback, wait) {
-        let timeout = null;
-
-        return function () {
-            const context = this;
-            const args = arguments;
-
-            window.clearTimeout(timeout);
-
-            timeout = window.setTimeout(function () {
-                callback.apply(context, args);
-            }, wait);
-        };
-    }
-
-    function isConfiguredApi() {
-        return (
-            CONFIG.API_URL &&
-            CONFIG.API_URL.indexOf('PASTE_YOUR_GOOGLE_APPS_SCRIPT') === -1 &&
-            /^https:\/\/script\.google\.com\//i.test(CONFIG.API_URL)
-        );
-    }
-
-    function assertApiConfigured() {
-        if (!isConfiguredApi()) {
-            throw new Error(
-                'ยังไม่ได้ตั้งค่า API_URL ใน app.js กรุณาใส่ URL Google Apps Script Web App ที่ลงท้ายด้วย /exec'
-            );
-        }
-    }
-
-    function getStorage(key) {
-        try {
-            return localStorage.getItem(key);
-        } catch (error) {
-            console.error('localStorage read error:', error);
-            return null;
-        }
-    }
-
-    function setStorage(key, value) {
-        try {
-            localStorage.setItem(key, value);
-            return true;
-        } catch (error) {
-            console.error('localStorage write error:', error);
-            return false;
-        }
-    }
-
-    function removeStorage(key) {
-        try {
-            localStorage.removeItem(key);
-        } catch (error) {
-            console.error('localStorage remove error:', error);
-        }
-    }
-
-    function setLoading(loading, message) {
-        state.loading = loading;
-
-        const loginButton = byId('loginButton');
-        const loginSubmitButton = byId('loginSubmit');
-        const globalLoader = byId('globalLoader');
-
-        if (loginButton) {
-            loginButton.disabled = loading;
-            loginButton.textContent = loading
-                ? 'กำลังเข้าสู่ระบบ...'
-                : 'เข้าสู่ระบบ';
-        }
-
-        if (loginSubmitButton) {
-            loginSubmitButton.disabled = loading;
-            loginSubmitButton.textContent = loading
-                ? 'กำลังดำเนินการ...'
-                : 'เข้าสู่ระบบ';
-        }
-
-        if (globalLoader) {
-            globalLoader.classList.toggle('hidden', !loading);
-
-            const loaderText = globalLoader.querySelector('[data-loader-text]');
-
-            if (loaderText) {
-                loaderText.textContent = message || 'กำลังโหลดข้อมูล...';
-            }
-        }
-
-        document.body.classList.toggle('is-loading', loading);
     }
 
     function showElement(element) {
@@ -466,11 +193,9 @@
             return;
         }
 
-        element.classList.remove('hidden');
-
-        if (element.style) {
-            element.style.display = '';
-        }
+        element.classList.remove("hidden");
+        element.removeAttribute("hidden");
+        element.style.display = "";
     }
 
     function hideElement(element) {
@@ -478,936 +203,1207 @@
             return;
         }
 
-        element.classList.add('hidden');
-
-        if (element.style) {
-            element.style.display = 'none';
-        }
+        element.classList.add("hidden");
+        element.setAttribute("hidden", "hidden");
+        element.style.display = "none";
     }
 
-    function showToast(message, type, duration) {
-        const toastType = type || 'info';
-        const timeout = duration || 3500;
-
-        let container = byId('toastContainer');
-
-        if (!container) {
-            container = document.createElement('div');
-            container.id = 'toastContainer';
-            container.className = 'toast-container';
-            document.body.appendChild(container);
-        }
-
-        const toast = document.createElement('div');
-        toast.className = 'toast toast-' + toastType;
-
-        const iconMap = {
-            success: '✓',
-            error: '!',
-            warning: '!',
-            info: 'i'
-        };
-
-        const icon = iconMap[toastType] || 'i';
-
-        toast.innerHTML =
-            '<span class="toast-icon">' +
-            escapeHtml(icon) +
-            '</span>' +
-            '<span class="toast-message">' +
-            escapeHtml(message) +
-            '</span>' +
-            '<button type="button" class="toast-close" aria-label="ปิด">×</button>';
-
-        container.appendChild(toast);
-
-        const closeButton = toast.querySelector('.toast-close');
-
-        if (closeButton) {
-            closeButton.addEventListener('click', function () {
-                removeToast(toast);
-            });
-        }
-
-        window.setTimeout(function () {
-            removeToast(toast);
-        }, timeout);
+    function showById(id) {
+        showElement(byId(id));
     }
 
-    function removeToast(toast) {
-        if (!toast) {
-            return;
-        }
-
-        toast.classList.add('toast-leaving');
-
-        window.setTimeout(function () {
-            if (toast.parentNode) {
-                toast.parentNode.removeChild(toast);
-            }
-        }, 250);
+    function hideById(id) {
+        hideElement(byId(id));
     }
 
-    function confirmAction(message) {
-        return new Promise(function (resolve) {
-            const result = window.confirm(message);
-            resolve(result);
-        });
-    }
-
-    function normalizeResponse(response) {
-        if (!response) {
-            throw new Error('ไม่ได้รับข้อมูลตอบกลับจากเซิร์ฟเวอร์');
-        }
-
-        if (typeof response === 'string') {
-            try {
-                response = JSON.parse(response);
-            } catch (error) {
-                return {
-                    ok: true,
-                    data: response
-                };
-            }
-        }
-
-        if (response.success === false) {
-            throw new Error(
-                response.message ||
-                response.error ||
-                'ระบบไม่สามารถดำเนินการได้'
-            );
-        }
-
-        if (response.ok === false) {
-            throw new Error(
-                response.message ||
-                response.error ||
-                'ระบบไม่สามารถดำเนินการได้'
-            );
-        }
-
-        return response;
-    }
-
-    function unwrapResponse(response) {
-        const normalized = normalizeResponse(response);
-
-        if (
-            Object.prototype.hasOwnProperty.call(
-                normalized,
-                'data'
-            )
-        ) {
-            return normalized.data;
-        }
-
-        return normalized;
-    }
-
-    function serializeValue(value) {
+    function escapeHtml(value) {
         if (value === null || value === undefined) {
-            return '';
+            return "";
         }
 
-        if (typeof value === 'object') {
-            return JSON.stringify(value);
+        return String(value)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    function escapeAttribute(value) {
+        return escapeHtml(value);
+    }
+
+    function safeText(value, fallback) {
+        if (value === null || value === undefined || value === "") {
+            return fallback || "";
         }
 
         return String(value);
     }
 
-    async function fetchWithTimeout(url, options) {
-        const controller = new AbortController();
-        const timeoutId = window.setTimeout(
-            function () {
-                controller.abort();
-            },
-            CONFIG.REQUEST_TIMEOUT
-        );
-
-        const requestOptions = Object.assign(
-            {},
-            options || {},
-            {
-                signal: controller.signal
-            }
-        );
-
-        try {
-            return await fetch(url, requestOptions);
-        } finally {
-            window.clearTimeout(timeoutId);
-        }
-    }
-
-    async function apiRequest(action, payload, options) {
-        assertApiConfigured();
-
-        const params = payload || {};
-        const requestOptions = options || {};
-
-        const requestData = Object.assign(
-            {},
-            params,
-            {
-                action: action
-            }
-        );
-
-        if (
-            state.token &&
-            action !== 'login'
-        ) {
-            requestData.token = state.token;
+    function parseMaybeJson(value) {
+        if (typeof value !== "string") {
+            return value;
         }
 
-        const body = new URLSearchParams();
+        var trimmed = value.trim();
 
-        Object.keys(requestData).forEach(function (key) {
-            body.set(
-                key,
-                serializeValue(requestData[key])
-            );
-        });
-
-        let response;
+        if (!trimmed) {
+            return value;
+        }
 
         try {
-            response = await fetchWithTimeout(
-                CONFIG.API_URL,
-                {
-                    method: 'POST',
-                    body: body,
-                    redirect: 'follow',
-                    credentials: 'omit',
-                    mode: 'cors',
-                    cache: 'no-store'
-                }
-            );
+            return JSON.parse(trimmed);
         } catch (error) {
-            if (error && error.name === 'AbortError') {
-                throw new Error(
-                    'การเชื่อมต่อใช้เวลานานเกินกำหนด กรุณาตรวจสอบ Google Apps Script และลองใหม่อีกครั้ง'
-                );
-            }
-
-            throw new Error(
-                'ไม่สามารถเชื่อมต่อ Google Apps Script ได้ กรุณาตรวจสอบ API_URL และการ Deploy Web App'
-            );
+            return value;
         }
-
-        const contentType =
-            response.headers.get('content-type') || '';
-
-        const text = await response.text();
-
-        if (!response.ok) {
-            throw new Error(
-                'เซิร์ฟเวอร์ตอบกลับ HTTP ' +
-                response.status +
-                ': ' +
-                text.substring(0, 500)
-            );
-        }
-
-        let parsed;
-
-        if (
-            contentType.indexOf('application/json') !== -1 ||
-            contentType.indexOf('text/json') !== -1
-        ) {
-            try {
-                parsed = JSON.parse(text);
-            } catch (error) {
-                throw new Error(
-                    'Google Apps Script ส่งข้อมูล JSON กลับมาไม่ถูกต้อง'
-                );
-            }
-        } else {
-            try {
-                parsed = JSON.parse(text);
-            } catch (error) {
-                throw new Error(
-                    'ได้รับข้อมูลจาก Google Apps Script แต่ไม่ใช่ JSON ที่ระบบรองรับ'
-                );
-            }
-        }
-
-        const normalized = normalizeResponse(parsed);
-
-        if (
-            normalized.message &&
-            /session|token|หมดอายุ|unauthorized|ไม่อนุญาต/i.test(
-                String(normalized.message)
-            )
-        ) {
-            if (action !== 'login') {
-                clearSession();
-            }
-        }
-
-        if (
-            normalized.error &&
-            /session|token|หมดอายุ|unauthorized|ไม่อนุญาต/i.test(
-                String(normalized.error)
-            )
-        ) {
-            if (action !== 'login') {
-                clearSession();
-            }
-        }
-
-        return normalized;
     }
 
-    function clearSession() {
-        state.token = '';
-        state.user = null;
+    function normalizeResponse(response) {
+        var result = parseMaybeJson(response);
 
-        removeStorage(CONFIG.SESSION_KEY);
-        removeStorage(CONFIG.USER_KEY);
+        if (result && typeof result === "object") {
+            if (result.body !== undefined) {
+                var body = parseMaybeJson(result.body);
 
-        hideApp();
-        showLogin();
+                if (body && typeof body === "object") {
+                    result = body;
+                }
+            }
+
+            if (result.response !== undefined) {
+                var responseData = parseMaybeJson(result.response);
+
+                if (responseData && typeof responseData === "object") {
+                    result = responseData;
+                }
+            }
+
+            if (result.result !== undefined) {
+                var resultData = parseMaybeJson(result.result);
+
+                if (resultData && typeof resultData === "object") {
+                    if (
+                        result.success === undefined &&
+                        result.ok === undefined &&
+                        result.status === undefined
+                    ) {
+                        result = resultData;
+                    } else {
+                        result.result = resultData;
+                    }
+                }
+            }
+
+            if (result.data !== undefined) {
+                var data = parseMaybeJson(result.data);
+
+                if (
+                    data &&
+                    typeof data === "object" &&
+                    result.token === undefined &&
+                    result.user === undefined &&
+                    result.success === undefined &&
+                    result.ok === undefined
+                ) {
+                    result = data;
+                }
+            }
+        }
+
+        return result;
     }
 
-    function saveSession(token, user) {
-        state.token = token || '';
+    function responseSuccess(response) {
+        var result = normalizeResponse(response);
+
+        if (result === true) {
+            return true;
+        }
+
+        if (!result || typeof result !== "object") {
+            return false;
+        }
+
+        if (result.success === true) {
+            return true;
+        }
+
+        if (result.ok === true) {
+            return true;
+        }
+
+        if (result.status === "success") {
+            return true;
+        }
+
+        if (result.status === true) {
+            return true;
+        }
+
+        return false;
+    }
+
+    function extractToken(response) {
+        var result = normalizeResponse(response);
+
+        if (!result || typeof result !== "object") {
+            return "";
+        }
+
+        if (result.token) {
+            return String(result.token);
+        }
+
+        if (result.sessionToken) {
+            return String(result.sessionToken);
+        }
+
+        if (result.accessToken) {
+            return String(result.accessToken);
+        }
+
+        if (result.sessionId) {
+            return String(result.sessionId);
+        }
+
+        if (result.data && typeof result.data === "object") {
+            if (result.data.token) {
+                return String(result.data.token);
+            }
+
+            if (result.data.sessionToken) {
+                return String(result.data.sessionToken);
+            }
+
+            if (result.data.accessToken) {
+                return String(result.data.accessToken);
+            }
+
+            if (result.data.sessionId) {
+                return String(result.data.sessionId);
+            }
+
+            if (result.data.session && typeof result.data.session === "object") {
+                if (result.data.session.token) {
+                    return String(result.data.session.token);
+                }
+
+                if (result.data.session.sessionToken) {
+                    return String(result.data.session.sessionToken);
+                }
+            }
+        }
+
+        if (result.result && typeof result.result === "object") {
+            if (result.result.token) {
+                return String(result.result.token);
+            }
+
+            if (result.result.sessionToken) {
+                return String(result.result.sessionToken);
+            }
+
+            if (result.result.accessToken) {
+                return String(result.result.accessToken);
+            }
+
+            if (result.result.sessionId) {
+                return String(result.result.sessionId);
+            }
+        }
+
+        return "";
+    }
+
+    function extractUser(response) {
+        var result = normalizeResponse(response);
+
+        if (!result || typeof result !== "object") {
+            return null;
+        }
+
+        if (result.user && typeof result.user === "object") {
+            return result.user;
+        }
+
+        if (result.data && typeof result.data === "object") {
+            if (result.data.user && typeof result.data.user === "object") {
+                return result.data.user;
+            }
+        }
+
+        if (result.result && typeof result.result === "object") {
+            if (result.result.user && typeof result.result.user === "object") {
+                return result.result.user;
+            }
+        }
+
+        return null;
+    }
+
+    function extractExpiresAt(response) {
+        var result = normalizeResponse(response);
+
+        if (!result || typeof result !== "object") {
+            return "";
+        }
+
+        if (result.expiresAt) {
+            return String(result.expiresAt);
+        }
+
+        if (result.data && typeof result.data === "object") {
+            if (result.data.expiresAt) {
+                return String(result.data.expiresAt);
+            }
+        }
+
+        if (result.result && typeof result.result === "object") {
+            if (result.result.expiresAt) {
+                return String(result.result.expiresAt);
+            }
+        }
+
+        return "";
+    }
+
+    function extractMessage(response) {
+        var result = normalizeResponse(response);
+
+        if (!result) {
+            return "เกิดข้อผิดพลาด";
+        }
+
+        if (typeof result === "string") {
+            return result;
+        }
+
+        if (result.message) {
+            return String(result.message);
+        }
+
+        if (result.error) {
+            if (typeof result.error === "string") {
+                return result.error;
+            }
+
+            if (result.error.message) {
+                return String(result.error.message);
+            }
+        }
+
+        if (result.data && typeof result.data === "object") {
+            if (result.data.message) {
+                return String(result.data.message);
+            }
+        }
+
+        return "ไม่สามารถดำเนินการได้";
+    }
+
+    function createError(message, status, code, raw) {
+        var error = new Error(message || "เกิดข้อผิดพลาด");
+        error.status = status || 0;
+        error.code = code || "";
+        error.raw = raw || null;
+        return error;
+    }
+
+    function getStorage() {
+        try {
+            return window.localStorage;
+        } catch (error) {
+            return window.sessionStorage;
+        }
+    }
+
+    function storageGet(key) {
+        try {
+            var storage = getStorage();
+            return storage.getItem(key) || "";
+        } catch (error) {
+            return "";
+        }
+    }
+
+    function storageSet(key, value) {
+        try {
+            var storage = getStorage();
+            storage.setItem(key, String(value));
+            return true;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function storageRemove(key) {
+        try {
+            var storage = getStorage();
+            storage.removeItem(key);
+        } catch (error) {
+        }
+    }
+
+    function saveSession(token, user, expiresAt) {
+        state.token = token || "";
         state.user = user || null;
+        state.expiresAt = expiresAt || "";
 
         if (state.token) {
-            setStorage(
-                CONFIG.SESSION_KEY,
-                state.token
-            );
-        } else {
-            removeStorage(CONFIG.SESSION_KEY);
+            storageSet(CONFIG.SESSION_KEY, state.token);
         }
 
         if (state.user) {
-            setStorage(
-                CONFIG.USER_KEY,
-                JSON.stringify(state.user)
-            );
-        } else {
-            removeStorage(CONFIG.USER_KEY);
+            storageSet(CONFIG.USER_KEY, JSON.stringify(state.user));
+        }
+
+        if (state.expiresAt) {
+            storageSet(CONFIG.EXPIRES_KEY, state.expiresAt);
         }
     }
 
     function loadStoredSession() {
-        const token = getStorage(CONFIG.SESSION_KEY);
-        const storedUser = getStorage(CONFIG.USER_KEY);
+        state.token = storageGet(CONFIG.SESSION_KEY);
+        state.expiresAt = storageGet(CONFIG.EXPIRES_KEY);
 
-        state.token = token || '';
+        var storedUser = storageGet(CONFIG.USER_KEY);
 
         if (storedUser) {
-            try {
-                state.user = JSON.parse(storedUser);
-            } catch (error) {
-                state.user = null;
+            var parsedUser = parseMaybeJson(storedUser);
+
+            if (parsedUser && typeof parsedUser === "object") {
+                state.user = parsedUser;
             }
         }
+    }
 
+    function clearSession() {
+        state.token = "";
+        state.user = null;
+        state.expiresAt = "";
+        state.bootstrap = null;
+        state.settings = [];
+        state.accounts = [];
+        state.categories = [];
+        state.customers = [];
+        state.vendors = [];
+        state.users = [];
+        state.documents = [];
+        state.currentData = [];
+        state.currentRecord = null;
+        state.editingId = "";
+
+        storageRemove(CONFIG.SESSION_KEY);
+        storageRemove(CONFIG.USER_KEY);
+        storageRemove(CONFIG.EXPIRES_KEY);
+    }
+
+    function isLoggedIn() {
         return !!state.token;
     }
 
-    async function login(username, password) {
-        if (!username || !password) {
-            throw new Error(
-                'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน'
-            );
+    function getUserRole() {
+        if (!state.user) {
+            return "";
         }
 
-        const response = await apiRequest(
-            'login',
-            {
-                username: username,
-                password: password
-            }
-        );
-
-        console.log(
-            'LOGIN RESPONSE:',
-            response
-        );
-
-        const data = unwrapResponse(response);
-
-        if (!data) {
-            throw new Error(
-                'ระบบไม่ส่งข้อมูล Login กลับมา'
-            );
-        }
-
-        const token =
-            data.token ||
-            data.sessionToken ||
-            data.accessToken ||
-            '';
-
-        const user =
-            data.user ||
-            data.account ||
-            null;
-
-        if (!token) {
-            throw new Error(
-                'เข้าสู่ระบบไม่สำเร็จ: Google Apps Script ไม่ได้ส่ง Session Token กลับมา'
-            );
-        }
-
-        saveSession(
-            token,
-            user
-        );
-
-        await loadBootstrap();
-
-        showApp();
-
-        navigate('dashboard');
-
-        return {
-            token: token,
-            user: user
-        };
-    }
-
-    async function handleLoginSubmit(event) {
-        if (event) {
-            event.preventDefault();
-            event.stopPropagation();
-        }
-
-        const usernameElement =
-            byId('username') ||
-            byId('loginUsername') ||
-            $('[name="username"]');
-
-        const passwordElement =
-            byId('password') ||
-            byId('loginPassword') ||
-            $('[name="password"]');
-
-        if (!usernameElement || !passwordElement) {
-            showToast(
-                'ไม่พบช่องชื่อผู้ใช้หรือรหัสผ่านในหน้า Login',
-                'error'
-            );
-
-            return false;
-        }
-
-        const username =
-            usernameElement.value.trim();
-
-        const password =
-            passwordElement.value;
-
-        if (!username) {
-            showToast(
-                'กรุณากรอกชื่อผู้ใช้',
-                'warning'
-            );
-
-            usernameElement.focus();
-
-            return false;
-        }
-
-        if (!password) {
-            showToast(
-                'กรุณากรอกรหัสผ่าน',
-                'warning'
-            );
-
-            passwordElement.focus();
-
-            return false;
-        }
-
-        try {
-            setLoading(
-                true,
-                'กำลังตรวจสอบข้อมูลเข้าสู่ระบบ...'
-            );
-
-            await login(
-                username,
-                password
-            );
-
-            if (passwordElement) {
-                passwordElement.value = '';
-            }
-
-            showToast(
-                'เข้าสู่ระบบสำเร็จ',
-                'success'
-            );
-        } catch (error) {
-            console.error(
-                'LOGIN ERROR:',
-                error
-            );
-
-            clearSession();
-
-            showLogin();
-
-            showToast(
-                error && error.message
-                    ? error.message
-                    : 'ไม่สามารถเข้าสู่ระบบได้',
-                'error',
-                6000
-            );
-        } finally {
-            setLoading(false);
-        }
-
-        return false;
-    }
-
-    async function logout() {
-        try {
-            if (state.token) {
-                await apiRequest(
-                    'logout',
-                    {}
-                );
-            }
-        } catch (error) {
-            console.warn(
-                'Logout server error:',
-                error
-            );
-        } finally {
-            clearSession();
-            showToast(
-                'ออกจากระบบแล้ว',
-                'success'
-            );
-        }
-    }
-
-    async function restoreSession() {
-        if (!loadStoredSession()) {
-            showLogin();
-            return false;
-        }
-
-        try {
-            setLoading(
-                true,
-                'กำลังตรวจสอบ Session...'
-            );
-
-            const response =
-                await apiRequest(
-                    'me',
-                    {}
-                );
-
-            const data =
-                unwrapResponse(response);
-
-            if (
-                data &&
-                (
-                    data.user ||
-                    data.account
-                )
-            ) {
-                state.user =
-                    data.user ||
-                    data.account;
-
-                setStorage(
-                    CONFIG.USER_KEY,
-                    JSON.stringify(
-                        state.user
-                    )
-                );
-            }
-
-            await loadBootstrap();
-
-            showApp();
-
-            navigate(
-                state.currentPage ||
-                'dashboard'
-            );
-
-            return true;
-        } catch (error) {
-            console.warn(
-                'Restore session failed:',
-                error
-            );
-
-            clearSession();
-
-            return false;
-        } finally {
-            setLoading(false);
-        }
-    }
-
-    async function loadBootstrap() {
-        const response =
-            await apiRequest(
-                'bootstrap',
-                {}
-            );
-
-        const data =
-            unwrapResponse(response) ||
-            {};
-
-        state.settings =
-            normalizeArrayOrObject(
-                data.settings
-            );
-
-        state.accounts =
-            normalizeArray(
-                data.accounts
-            );
-
-        state.categories =
-            normalizeArray(
-                data.categories
-            );
-
-        state.customers =
-            normalizeArray(
-                data.customers
-            );
-
-        state.vendors =
-            normalizeArray(
-                data.vendors ||
-                data.suppliers
-            );
-
-        state.users =
-            normalizeArray(
-                data.users
-            );
-
-        state.documentTypes =
-            normalizeArray(
-                data.documentTypes
-            );
-
-        if (!state.documentTypes.length) {
-            state.documentTypes =
-                DOCUMENT_TYPES.slice();
-        }
-
-        if (data.user) {
-            state.user = data.user;
-
-            setStorage(
-                CONFIG.USER_KEY,
-                JSON.stringify(
-                    data.user
-                )
-            );
-        }
-
-        renderUserInfo();
-        applyPermissions();
-
-        return data;
-    }
-
-    function normalizeArray(value) {
-        if (Array.isArray(value)) {
-            return value;
-        }
-
-        if (!value) {
-            return [];
-        }
-
-        if (Array.isArray(value.rows)) {
-            return value.rows;
-        }
-
-        if (Array.isArray(value.items)) {
-            return value.items;
-        }
-
-        if (Array.isArray(value.records)) {
-            return value.records;
-        }
-
-        if (typeof value === 'object') {
-            return Object.keys(value).map(
-                function (key) {
-                    const item = value[key];
-
-                    if (
-                        item &&
-                        typeof item === 'object'
-                    ) {
-                        if (!item.id) {
-                            item.id = key;
-                        }
-                    }
-
-                    return item;
-                }
-            );
-        }
-
-        return [];
-    }
-
-    function normalizeArrayOrObject(value) {
-        if (!value) {
-            return {};
-        }
-
-        if (
-            typeof value === 'object' &&
-            !Array.isArray(value)
-        ) {
-            return value;
-        }
-
-        const array =
-            normalizeArray(value);
-
-        const object = {};
-
-        array.forEach(
-            function (item) {
-                if (!item) {
-                    return;
-                }
-
-                const key =
-                    item.key ||
-                    item.name ||
-                    item.id;
-
-                if (key) {
-                    object[key] =
-                        item.value !== undefined
-                            ? item.value
-                            : item;
-                }
-            }
-        );
-
-        return object;
-    }
-
-    function getSetting(key, fallback) {
-        if (
-            state.settings &&
-            Object.prototype.hasOwnProperty.call(
-                state.settings,
-                key
-            )
-        ) {
-            const value =
-                state.settings[key];
-
-            if (
-                value &&
-                typeof value === 'object' &&
-                value.value !== undefined
-            ) {
-                return value.value;
-            }
-
-            return value;
-        }
-
-        return fallback;
+        return String(
+            state.user.role ||
+            state.user.userRole ||
+            state.user.type ||
+            ""
+        ).toLowerCase();
     }
 
     function isAdmin() {
-        if (!state.user) {
+        var role = getUserRole();
+
+        return role === "admin" ||
+            role === "administrator" ||
+            role === "ผู้ดูแลระบบ";
+    }
+
+    function canAccessPage(page) {
+        if (page === "users" || page === "settings" || page === "auditlogs") {
+            return isAdmin();
+        }
+
+        return true;
+    }
+
+    function formatMoney(value) {
+        var number = parseFloat(value);
+
+        if (!isFinite(number)) {
+            number = 0;
+        }
+
+        return new Intl.NumberFormat(CONFIG.LOCALE, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        }).format(number);
+    }
+
+    function formatInteger(value) {
+        var number = parseFloat(value);
+
+        if (!isFinite(number)) {
+            number = 0;
+        }
+
+        return new Intl.NumberFormat(CONFIG.LOCALE, {
+            maximumFractionDigits: 0
+        }).format(number);
+    }
+
+    function formatDate(value) {
+        if (!value) {
+            return "";
+        }
+
+        var date = new Date(value);
+
+        if (isNaN(date.getTime())) {
+            var text = String(value);
+
+            if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+                var parts = text.split("-");
+                return parts[2] + "/" + parts[1] + "/" + (parseInt(parts[0], 10) + 543);
+            }
+
+            return text;
+        }
+
+        return new Intl.DateTimeFormat(CONFIG.LOCALE, {
+            day: "2-digit",
+            month: "2-digit",
+            year: "numeric"
+        }).format(date);
+    }
+
+    function formatDateTime(value) {
+        if (!value) {
+            return "";
+        }
+
+        var date = new Date(value);
+
+        if (isNaN(date.getTime())) {
+            return String(value);
+        }
+
+        return new Intl.DateTimeFormat(CONFIG.LOCALE, {
+            day: "2-digit",
+            month: "2-digit",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit"
+        }).format(date);
+    }
+
+    function toInputDate(value) {
+        if (!value) {
+            var now = new Date();
+
+            return now.getFullYear() +
+                "-" +
+                String(now.getMonth() + 1).padStart(2, "0") +
+                "-" +
+                String(now.getDate()).padStart(2, "0");
+        }
+
+        var date = new Date(value);
+
+        if (isNaN(date.getTime())) {
+            var text = String(value);
+
+            if (/^\d{4}-\d{2}-\d{2}/.test(text)) {
+                return text.substring(0, 10);
+            }
+
+            return "";
+        }
+
+        return date.getFullYear() +
+            "-" +
+            String(date.getMonth() + 1).padStart(2, "0") +
+            "-" +
+            String(date.getDate()).padStart(2, "0");
+    }
+
+    function parseNumber(value) {
+        if (value === null || value === undefined || value === "") {
+            return 0;
+        }
+
+        var cleaned = String(value)
+            .replace(/,/g, "")
+            .replace(/บาท/g, "")
+            .trim();
+
+        var number = parseFloat(cleaned);
+
+        if (!isFinite(number)) {
+            return 0;
+        }
+
+        return number;
+    }
+
+    function generateId(prefix) {
+        var randomPart = Math.random().toString(36).substring(2, 12);
+        var timePart = Date.now().toString(36);
+
+        return String(prefix || "ID") + "_" + timePart + "_" + randomPart;
+    }
+
+    function debounce(callback, wait) {
+        var timeout = null;
+
+        return function () {
+            var context = this;
+            var args = arguments;
+
+            clearTimeout(timeout);
+
+            timeout = setTimeout(function () {
+                callback.apply(context, args);
+            }, wait || 300);
+        };
+    }
+
+    function setLoading(value, text) {
+        state.loading = !!value;
+
+        var loaders = qsa("[data-loading]");
+
+        loaders.forEach(function (element) {
+            if (state.loading) {
+                showElement(element);
+            } else {
+                hideElement(element);
+            }
+        });
+
+        var loadingText = qs("[data-loading-text]");
+
+        if (loadingText && text) {
+            loadingText.textContent = text;
+        }
+
+        var loginButton = byId("loginButton") ||
+            byId("loginBtn") ||
+            qs("[data-login-submit]");
+
+        if (loginButton && state.loginInProgress) {
+            loginButton.disabled = true;
+        }
+    }
+
+    function showToast(message, type) {
+        var container = byId("toastContainer");
+
+        if (!container) {
+            container = document.createElement("div");
+            container.id = "toastContainer";
+            container.className = "toast-container";
+            document.body.appendChild(container);
+        }
+
+        var toast = document.createElement("div");
+
+        toast.className = "toast toast-" + String(type || "info");
+
+        toast.innerHTML =
+            '<div class="toast-message">' +
+            escapeHtml(message) +
+            "</div>";
+
+        container.appendChild(toast);
+
+        setTimeout(function () {
+            toast.classList.add("toast-hide");
+
+            setTimeout(function () {
+                if (toast.parentNode) {
+                    toast.parentNode.removeChild(toast);
+                }
+            }, 300);
+        }, 3500);
+    }
+
+    function confirmAction(message) {
+        return window.confirm(message || "ยืนยันการดำเนินการหรือไม่");
+    }
+
+    function getApiUrl() {
+        var url = CONFIG.API_URL;
+
+        if (!url) {
+            var element = qs("[data-api-url]");
+
+            if (element) {
+                url = element.getAttribute("data-api-url") || "";
+            }
+        }
+
+        return String(url || "").trim();
+    }
+
+    function buildRequest(action, payload, includeToken) {
+        var request = {};
+
+        request.action = action;
+
+        if (includeToken !== false && state.token) {
+            request.token = state.token;
+        }
+
+        if (payload && typeof payload === "object") {
+            Object.keys(payload).forEach(function (key) {
+                var value = payload[key];
+
+                if (value === undefined) {
+                    return;
+                }
+
+                request[key] = value;
+            });
+        }
+
+        return request;
+    }
+
+    function requestToFormData(request) {
+        var params = new URLSearchParams();
+
+        Object.keys(request).forEach(function (key) {
+            var value = request[key];
+
+            if (value === null || value === undefined) {
+                return;
+            }
+
+            if (typeof value === "object") {
+                params.set(key, JSON.stringify(value));
+            } else {
+                params.set(key, String(value));
+            }
+        });
+
+        return params;
+    }
+
+    function shouldTryFormFallback(action) {
+        var readActions = [
+            "login",
+            "ping",
+            "me",
+            "bootstrap",
+            "dashboard",
+            "report",
+            "list",
+            "get",
+            "settings",
+            "auditlogs",
+            "getDocumentWithItems",
+            "getRecentTransactions"
+        ];
+
+        return readActions.indexOf(action) !== -1;
+    }
+
+    async function fetchWithTimeout(url, options) {
+        var controller = null;
+        var timeoutId = null;
+
+        if (window.AbortController) {
+            controller = new AbortController();
+
+            options.signal = controller.signal;
+
+            timeoutId = setTimeout(function () {
+                controller.abort();
+            }, CONFIG.REQUEST_TIMEOUT);
+        }
+
+        try {
+            return await fetch(url, options);
+        } finally {
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+            }
+        }
+    }
+
+    async function parseFetchResponse(response) {
+        var text = await response.text();
+
+        var parsed = parseMaybeJson(text);
+
+        if (!response.ok) {
+            throw createError(
+                extractMessage(parsed) || "เซิร์ฟเวอร์ไม่สามารถตอบสนองได้",
+                response.status,
+                "",
+                parsed
+            );
+        }
+
+        return parsed;
+    }
+
+    async function apiRequest(action, payload, options) {
+        var apiUrl = getApiUrl();
+
+        if (!apiUrl) {
+            throw createError(
+                "ยังไม่ได้กำหนด URL ของ Google Apps Script Web App ใน app.js",
+                0,
+                "NO_API_URL",
+                null
+            );
+        }
+
+        var requestOptions = options || {};
+        var includeToken = requestOptions.includeToken !== false;
+        var request = buildRequest(action, payload || {}, includeToken);
+
+        var jsonBody = JSON.stringify(request);
+
+        try {
+            var response = await fetchWithTimeout(apiUrl, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "text/plain;charset=UTF-8",
+                    "Accept": "application/json,text/plain,*/*"
+                },
+                body: jsonBody,
+                redirect: "follow",
+                cache: "no-store"
+            });
+
+            return await parseFetchResponse(response);
+        } catch (jsonError) {
+            if (!shouldTryFormFallback(action)) {
+                throw jsonError;
+            }
+
+            try {
+                var formResponse = await fetchWithTimeout(apiUrl, {
+                    method: "POST",
+                    body: requestToFormData(request),
+                    redirect: "follow",
+                    cache: "no-store"
+                });
+
+                return await parseFetchResponse(formResponse);
+            } catch (formError) {
+                if (jsonError && jsonError.name === "AbortError") {
+                    throw createError(
+                        "การเชื่อมต่อ Google Apps Script ใช้เวลานานเกินกำหนด",
+                        408,
+                        "TIMEOUT",
+                        null
+                    );
+                }
+
+                throw formError;
+            }
+        }
+    }
+
+    function isUnauthorizedError(error) {
+        if (!error) {
             return false;
         }
 
-        const role =
-            String(
-                state.user.role ||
-                state.user.userRole ||
-                ''
-            ).toLowerCase();
-
-        return (
-            role === 'admin' ||
-            role === 'administrator' ||
-            role === 'owner' ||
-            role === 'ผู้ดูแลระบบ'
-        );
-    }
-
-    function hasPermission(permission) {
-        if (isAdmin()) {
+        if (error.status === 401) {
             return true;
         }
 
-        if (!state.user) {
-            return false;
+        if (String(error.code || "").toUpperCase() === "UNAUTHORIZED") {
+            return true;
         }
 
-        const permissions =
-            state.user.permissions ||
-            state.user.permission ||
-            [];
-
-        if (Array.isArray(permissions)) {
-            return permissions.indexOf(
-                permission
-            ) !== -1;
-        }
+        var message = String(error.message || "").toLowerCase();
 
         if (
-            permissions &&
-            typeof permissions === 'object'
+            message.indexOf("unauthorized") !== -1 ||
+            message.indexOf("session") !== -1 ||
+            message.indexOf("token") !== -1 ||
+            message.indexOf("หมดอายุ") !== -1 ||
+            message.indexOf("เข้าสู่ระบบ") !== -1
         ) {
-            return permissions[permission] === true;
+            return true;
         }
 
         return false;
     }
 
-    function applyPermissions() {
-        const adminOnly =
-            $$('[data-admin-only]');
+    async function login(username, password) {
+        if (state.loginInProgress) {
+            return;
+        }
 
-        adminOnly.forEach(
-            function (element) {
-                if (isAdmin()) {
-                    showElement(element);
-                } else {
-                    hideElement(element);
+        username = String(username || "").trim();
+        password = String(password || "");
+
+        if (!username) {
+            showToast("กรุณากรอกชื่อผู้ใช้งาน", "warning");
+            return;
+        }
+
+        if (!password) {
+            showToast("กรุณากรอกรหัสผ่าน", "warning");
+            return;
+        }
+
+        state.loginInProgress = true;
+        setLoading(true, "กำลังตรวจสอบข้อมูลเข้าสู่ระบบ");
+
+        var button = byId("loginButton") ||
+            byId("loginBtn") ||
+            qs("[data-login-submit]");
+
+        var oldButtonText = "";
+
+        if (button) {
+            oldButtonText = button.textContent;
+            button.disabled = true;
+            button.textContent = "กำลังเข้าสู่ระบบ...";
+        }
+
+        try {
+            var response = await apiRequest(
+                "login",
+                {
+                    username: username,
+                    password: password
+                },
+                {
+                    includeToken: false
+                }
+            );
+
+            var normalized = normalizeResponse(response);
+
+            if (!responseSuccess(normalized)) {
+                throw createError(
+                    extractMessage(normalized) || "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง",
+                    401,
+                    "LOGIN_FAILED",
+                    normalized
+                );
+            }
+
+            var token = extractToken(normalized);
+            var user = extractUser(normalized);
+            var expiresAt = extractExpiresAt(normalized);
+
+            if (!token) {
+                throw createError(
+                    "เข้าสู่ระบบสำเร็จแต่เซิร์ฟเวอร์ไม่ได้ส่ง Session Token กลับมา",
+                    500,
+                    "NO_SESSION_TOKEN",
+                    normalized
+                );
+            }
+
+            saveSession(token, user, expiresAt);
+
+            updateUserInformation();
+
+            try {
+                await loadBootstrap();
+            } catch (bootstrapError) {
+                if (isUnauthorizedError(bootstrapError)) {
+                    clearSession();
+                    throw bootstrapError;
+                }
+
+                showToast(
+                    "เข้าสู่ระบบสำเร็จ แต่โหลดข้อมูลระบบเริ่มต้นไม่สำเร็จ",
+                    "warning"
+                );
+            }
+
+            showApplication();
+
+            try {
+                await navigate("dashboard", true);
+            } catch (dashboardError) {
+                showToast(
+                    "เข้าสู่ระบบสำเร็จ แต่ไม่สามารถโหลด Dashboard ได้",
+                    "warning"
+                );
+            }
+
+            showToast("เข้าสู่ระบบสำเร็จ", "success");
+        } catch (error) {
+            console.error("LOGIN ERROR", error);
+
+            var message = error.message ||
+                "ไม่สามารถเข้าสู่ระบบได้";
+
+            if (error.code === "NO_API_URL") {
+                message = "ยังไม่ได้กำหนด URL ของ Google Apps Script Web App";
+            }
+
+            showToast(message, "error");
+
+            hideApplication();
+            showLoginScreen();
+        } finally {
+            state.loginInProgress = false;
+            setLoading(false);
+
+            if (button) {
+                button.disabled = false;
+
+                if (oldButtonText) {
+                    button.textContent = oldButtonText;
                 }
             }
-        );
+        }
+    }
 
-        const permissionElements =
-            $$('[data-permission]');
+    async function logout() {
+        var currentToken = state.token;
 
-        permissionElements.forEach(
-            function (element) {
-                const permission =
-                    element.getAttribute(
-                        'data-permission'
-                    );
-
-                if (
-                    permission &&
-                    hasPermission(permission)
-                ) {
-                    showElement(element);
-                } else {
-                    hideElement(element);
-                }
+        try {
+            if (currentToken) {
+                await apiRequest(
+                    "logout",
+                    {},
+                    {
+                        includeToken: true
+                    }
+                );
             }
+        } catch (error) {
+            console.warn("Logout API error", error);
+        }
+
+        clearSession();
+
+        hideApplication();
+        showLoginScreen();
+
+        var passwordInput = getLoginPasswordInput();
+
+        if (passwordInput) {
+            passwordInput.value = "";
+        }
+
+        showToast("ออกจากระบบแล้ว", "success");
+    }
+
+    async function restoreSession() {
+        loadStoredSession();
+
+        if (!state.token) {
+            showLoginScreen();
+            return false;
+        }
+
+        try {
+            var meResponse = await apiRequest(
+                "me",
+                {},
+                {
+                    includeToken: true
+                }
+            );
+
+            if (!responseSuccess(meResponse)) {
+                throw createError(
+                    extractMessage(meResponse),
+                    401,
+                    "UNAUTHORIZED",
+                    meResponse
+                );
+            }
+
+            var user = extractUser(meResponse);
+
+            if (user) {
+                state.user = user;
+                storageSet(CONFIG.USER_KEY, JSON.stringify(user));
+            }
+
+            var responseToken = extractToken(meResponse);
+
+            if (responseToken) {
+                state.token = responseToken;
+                storageSet(CONFIG.SESSION_KEY, responseToken);
+            }
+
+            var responseExpires = extractExpiresAt(meResponse);
+
+            if (responseExpires) {
+                state.expiresAt = responseExpires;
+                storageSet(CONFIG.EXPIRES_KEY, responseExpires);
+            }
+
+            try {
+                await loadBootstrap();
+            } catch (bootstrapError) {
+                if (isUnauthorizedError(bootstrapError)) {
+                    throw bootstrapError;
+                }
+
+                showToast(
+                    "Session ยังใช้งานได้ แต่โหลดข้อมูลเริ่มต้นไม่สำเร็จ",
+                    "warning"
+                );
+            }
+
+            showApplication();
+            updateUserInformation();
+
+            try {
+                await navigate("dashboard", true);
+            } catch (dashboardError) {
+                showToast(
+                    "ไม่สามารถโหลด Dashboard ได้",
+                    "warning"
+                );
+            }
+
+            return true;
+        } catch (error) {
+            console.warn("RESTORE SESSION ERROR", error);
+
+            clearSession();
+            hideApplication();
+            showLoginScreen();
+
+            return false;
+        }
+    }
+
+    function getLoginForm() {
+        return byId("loginForm") ||
+            qs("form[data-login-form]");
+    }
+
+    function getLoginUsernameInput() {
+        return byId("loginUsername") ||
+            byId("username") ||
+            qs('input[name="username"]') ||
+            qs('input[name="userName"]');
+    }
+
+    function getLoginPasswordInput() {
+        return byId("loginPassword") ||
+            byId("password") ||
+            qs('input[name="password"]');
+    }
+
+    function getLoginSubmitButton() {
+        return byId("loginButton") ||
+            byId("loginBtn") ||
+            qs("[data-login-submit]") ||
+            qs('#loginForm button[type="submit"]');
+    }
+
+    function handleLoginSubmit(event) {
+        if (event) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            if (event.stopImmediatePropagation) {
+                event.stopImmediatePropagation();
+            }
+
+            event.returnValue = false;
+        }
+
+        if (state.loginInProgress) {
+            return false;
+        }
+
+        var usernameInput = getLoginUsernameInput();
+        var passwordInput = getLoginPasswordInput();
+
+        var username = usernameInput ? usernameInput.value : "";
+        var password = passwordInput ? passwordInput.value : "";
+
+        login(username, password);
+
+        return false;
+    }
+
+    function bindLoginEvents() {
+        var form = getLoginForm();
+
+        if (form) {
+            form.setAttribute("novalidate", "novalidate");
+
+            form.addEventListener(
+                "submit",
+                function (event) {
+                    handleLoginSubmit(event);
+                },
+                true
+            );
+        }
+
+        var button = getLoginSubmitButton();
+
+        if (button) {
+            button.addEventListener(
+                "click",
+                function (event) {
+                    handleLoginSubmit(event);
+                },
+                true
+            );
+        }
+
+        document.addEventListener(
+            "keydown",
+            function (event) {
+                var target = event.target;
+
+                if (!target) {
+                    return;
+                }
+
+                var formElement = target.closest ?
+                    target.closest("form") :
+                    null;
+
+                if (!formElement) {
+                    return;
+                }
+
+                if (formElement === form && event.key === "Enter") {
+                    event.preventDefault();
+
+                    if (event.stopImmediatePropagation) {
+                        event.stopImmediatePropagation();
+                    }
+
+                    handleLoginSubmit(event);
+                }
+            },
+            true
         );
     }
 
-    function renderUserInfo() {
-        const user =
-            state.user || {};
+    function showLoginScreen() {
+        var loginScreen = byId("loginScreen") ||
+            byId("loginPage") ||
+            byId("loginContainer") ||
+            qs("[data-login-screen]");
 
-        const name =
-            user.fullName ||
-            user.name ||
-            user.username ||
-            'ผู้ใช้งาน';
-
-        const role =
-            user.role ||
-            'user';
-
-        const username =
-            user.username ||
-            '';
-
-        const elements = [
-            byId('userDisplayName'),
-            byId('currentUserName'),
-            byId('profileName')
-        ];
-
-        elements.forEach(
-            function (element) {
-                if (element) {
-                    element.textContent =
-                        name;
-                }
-            }
-        );
-
-        const roleElements = [
-            byId('userRole'),
-            byId('currentUserRole'),
-            byId('profileRole')
-        ];
-
-        roleElements.forEach(
-            function (element) {
-                if (element) {
-                    element.textContent =
-                        role;
-                }
-            }
-        );
-
-        const usernameElements = [
-            byId('userUsername'),
-            byId('currentUsername')
-        ];
-
-        usernameElements.forEach(
-            function (element) {
-                if (element) {
-                    element.textContent =
-                        username;
-                }
-            }
-        );
-
-        const avatarElements =
-            $$('[data-user-avatar]');
-
-        avatarElements.forEach(
-            function (element) {
-                const first =
-                    String(name)
-                        .trim()
-                        .charAt(0)
-                        .toUpperCase();
-
-                element.textContent =
-                    first || 'U';
-            }
-        );
-    }
-
-    function showLogin() {
-        const loginScreen =
-            byId('loginScreen') ||
-            byId('loginPage') ||
-            $('.login-screen');
-
-        const appShell =
-            byId('appShell') ||
-            byId('app') ||
-            $('.app-shell');
+        var appShell = byId("appShell") ||
+            byId("appLayout") ||
+            byId("application") ||
+            qs("[data-app-shell]");
 
         if (loginScreen) {
             showElement(loginScreen);
@@ -1417,8019 +1413,5652 @@
             hideElement(appShell);
         }
 
-        document.body.classList.add(
-            'login-active'
-        );
+        qsa("[data-authenticated]").forEach(function (element) {
+            hideElement(element);
+        });
 
-        document.body.classList.remove(
-            'app-active'
-        );
+        document.body.classList.remove("logged-in");
+        document.body.classList.add("logged-out");
     }
 
-    function hideLogin() {
-        const loginScreen =
-            byId('loginScreen') ||
-            byId('loginPage') ||
-            $('.login-screen');
+    function showApplication() {
+        var loginScreen = byId("loginScreen") ||
+            byId("loginPage") ||
+            byId("loginContainer") ||
+            qs("[data-login-screen]");
+
+        var appShell = byId("appShell") ||
+            byId("appLayout") ||
+            byId("application") ||
+            qs("[data-app-shell]");
 
         if (loginScreen) {
             hideElement(loginScreen);
         }
 
-        document.body.classList.remove(
-            'login-active'
-        );
-    }
-
-    function showApp() {
-        const appShell =
-            byId('appShell') ||
-            byId('app') ||
-            $('.app-shell');
-
-        hideLogin();
-
         if (appShell) {
             showElement(appShell);
         }
 
-        document.body.classList.add(
-            'app-active'
-        );
+        qsa("[data-authenticated]").forEach(function (element) {
+            showElement(element);
+        });
 
-        renderUserInfo();
-        applyPermissions();
+        document.body.classList.remove("logged-out");
+        document.body.classList.add("logged-in");
+
+        updateUserInformation();
+        updatePermissionVisibility();
     }
 
-    function hideApp() {
-        const appShell =
-            byId('appShell') ||
-            byId('app') ||
-            $('.app-shell');
+    function hideApplication() {
+        var appShell = byId("appShell") ||
+            byId("appLayout") ||
+            byId("application") ||
+            qs("[data-app-shell]");
 
         if (appShell) {
             hideElement(appShell);
         }
-
-        document.body.classList.remove(
-            'app-active'
-        );
     }
 
-    function setPageTitle(page) {
-        const config =
-            PAGE_CONFIG[page] ||
-            {
-                title: page,
-                subtitle: ''
-            };
+    function updateUserInformation() {
+        var user = state.user;
 
-        const titleElements = [
-            byId('pageTitle'),
-            byId('contentTitle'),
-            byId('currentPageTitle')
-        ];
-
-        titleElements.forEach(
-            function (element) {
-                if (element) {
-                    element.textContent =
-                        config.title;
-                }
-            }
-        );
-
-        const subtitleElements = [
-            byId('pageSubtitle'),
-            byId('contentSubtitle'),
-            byId('currentPageSubtitle')
-        ];
-
-        subtitleElements.forEach(
-            function (element) {
-                if (element) {
-                    element.textContent =
-                        config.subtitle;
-                }
-            }
-        );
-
-        document.title =
-            config.title +
-            ' | ' +
-            CONFIG.APP_NAME;
-    }
-
-    function setActiveNavigation(page) {
-        const navigation =
-            $$('[data-page]');
-
-        navigation.forEach(
-            function (element) {
-                const target =
-                    element.getAttribute(
-                        'data-page'
-                    );
-
-                element.classList.toggle(
-                    'active',
-                    target === page
-                );
-
-                element.setAttribute(
-                    'aria-current',
-                    target === page
-                        ? 'page'
-                        : 'false'
-                );
-            }
-        );
-    }
-
-    function showPageSection(page) {
-        const sections =
-            $$('[data-page-section]');
-
-        if (sections.length) {
-            sections.forEach(
-                function (section) {
-                    const target =
-                        section.getAttribute(
-                            'data-page-section'
-                        );
-
-                    section.classList.toggle(
-                        'active',
-                        target === page
-                    );
-
-                    if (target === page) {
-                        showElement(section);
-                    } else {
-                        hideElement(section);
-                    }
-                }
-            );
-
+        if (!user) {
             return;
         }
 
-        const pages = Object.keys(
-            PAGE_CONFIG
+        var displayName = safeText(
+            user.fullName ||
+            user.name ||
+            user.username,
+            "ผู้ใช้งาน"
         );
 
-        pages.forEach(
-            function (pageName) {
-                const section =
-                    byId(
-                        'page-' +
-                        pageName
-                    );
+        var username = safeText(user.username, "");
+        var role = safeText(user.role, "");
 
-                if (!section) {
-                    return;
-                }
+        var nameElements = [
+            byId("userDisplayName"),
+            byId("currentUserName"),
+            byId("profileName")
+        ];
 
-                if (pageName === page) {
-                    showElement(section);
-                    section.classList.add(
-                        'active'
-                    );
+        nameElements.forEach(function (element) {
+            if (element) {
+                element.textContent = displayName;
+            }
+        });
+
+        var usernameElements = [
+            byId("userUsername"),
+            byId("currentUsername"),
+            byId("profileUsername")
+        ];
+
+        usernameElements.forEach(function (element) {
+            if (element) {
+                element.textContent = username;
+            }
+        });
+
+        var roleElements = [
+            byId("userRole"),
+            byId("currentUserRole"),
+            byId("profileRole")
+        ];
+
+        roleElements.forEach(function (element) {
+            if (element) {
+                element.textContent = role;
+            }
+        });
+
+        qsa("[data-user-name]").forEach(function (element) {
+            element.textContent = displayName;
+        });
+
+        qsa("[data-user-role]").forEach(function (element) {
+            element.textContent = role;
+        });
+    }
+
+    function updatePermissionVisibility() {
+        var restricted = [
+            "users",
+            "settings",
+            "auditlogs"
+        ];
+
+        restricted.forEach(function (page) {
+            qsa(
+                '[data-page="' + page + '"], [data-nav="' + page + '"]'
+            ).forEach(function (element) {
+                if (isAdmin()) {
+                    showElement(element);
                 } else {
-                    hideElement(section);
-                    section.classList.remove(
-                        'active'
-                    );
+                    hideElement(element);
                 }
-            }
-        );
+            });
+        });
     }
 
-    async function navigate(page) {
-        if (!page) {
-            return;
-        }
-
-        const allowedPages = Object.keys(
-            PAGE_CONFIG
+    async function loadBootstrap() {
+        var response = await apiRequest(
+            "bootstrap",
+            {},
+            {
+                includeToken: true
+            }
         );
 
-        if (
-            allowedPages.indexOf(page) === -1
-        ) {
-            page = 'dashboard';
+        if (!responseSuccess(response)) {
+            throw createError(
+                extractMessage(response),
+                401,
+                "BOOTSTRAP_FAILED",
+                response
+            );
         }
 
-        if (
-            (
-                page === 'users' ||
-                page === 'settings' ||
-                page === 'auditlogs'
-            ) &&
-            !isAdmin()
-        ) {
-            showToast(
-                'คุณไม่มีสิทธิ์เข้าถึงหน้านี้',
-                'warning'
-            );
+        var data = normalizeResponse(response);
 
-            return;
+        if (data.data && typeof data.data === "object") {
+            data = data.data;
+        }
+
+        if (data.result && typeof data.result === "object") {
+            data = data.result;
+        }
+
+        state.bootstrap = data || {};
+
+        state.settings = normalizeArray(
+            data.settings ||
+            data.Settings
+        );
+
+        state.accounts = normalizeArray(
+            data.accounts ||
+            data.Accounts
+        );
+
+        state.categories = normalizeArray(
+            data.categories ||
+            data.Categories
+        );
+
+        state.customers = normalizeArray(
+            data.customers ||
+            data.Customers
+        );
+
+        state.vendors = normalizeArray(
+            data.vendors ||
+            data.Vendors ||
+            data.suppliers
+        );
+
+        state.users = normalizeArray(
+            data.users ||
+            data.Users
+        );
+
+        state.documents = normalizeArray(
+            data.documents ||
+            data.Documents
+        );
+
+        var bootstrapUser = extractUser(data);
+
+        if (bootstrapUser) {
+            state.user = bootstrapUser;
+            storageSet(CONFIG.USER_KEY, JSON.stringify(bootstrapUser));
+        }
+
+        updateUserInformation();
+        updatePermissionVisibility();
+
+        return data;
+    }
+
+    function normalizeArray(value) {
+        if (!value) {
+            return [];
+        }
+
+        if (Array.isArray(value)) {
+            return value;
+        }
+
+        if (typeof value === "object") {
+            if (Array.isArray(value.rows)) {
+                return value.rows;
+            }
+
+            if (Array.isArray(value.data)) {
+                return value.data;
+            }
+
+            if (Array.isArray(value.items)) {
+                return value.items;
+            }
+
+            var keys = Object.keys(value);
+
+            if (keys.length) {
+                var output = [];
+
+                keys.forEach(function (key) {
+                    if (value[key] && typeof value[key] === "object") {
+                        output.push(value[key]);
+                    }
+                });
+
+                return output;
+            }
+        }
+
+        return [];
+    }
+
+    async function navigate(page, silent) {
+        page = String(page || "dashboard");
+
+        if (!PAGE_NAMES[page]) {
+            page = "dashboard";
+        }
+
+        if (!canAccessPage(page)) {
+            if (!silent) {
+                showToast("คุณไม่มีสิทธิ์เข้าถึงเมนูนี้", "warning");
+            }
+
+            page = "dashboard";
         }
 
         state.currentPage = page;
 
-        setStorage(
-            'elaas_private_finance_current_page',
-            page
-        );
-
-        setPageTitle(page);
-        setActiveNavigation(page);
+        updateNavigationState(page);
         showPageSection(page);
 
-        closeSidebarMobile();
+        var title = PAGE_NAMES[page];
+
+        setTextByIds(
+            [
+                "pageTitle",
+                "contentTitle",
+                "breadcrumbCurrent"
+            ],
+            title
+        );
 
         try {
-            if (page === 'dashboard') {
+            if (page === "dashboard") {
                 await renderDashboard();
-                return;
-            }
-
-            if (page === 'reports') {
-                await renderReportsPage();
-                return;
-            }
-
-            if (page === 'settings') {
+            } else if (page === "income") {
+                await renderIncomePage();
+            } else if (page === "expense") {
+                await renderExpensePage();
+            } else if (page === "transfers") {
+                await renderTransfersPage();
+            } else if (page === "accounts") {
+                await renderAccountsPage();
+            } else if (page === "customers") {
+                await renderCustomersPage();
+            } else if (page === "vendors") {
+                await renderVendorsPage();
+            } else if (page === "documents") {
+                await renderDocumentsPage();
+            } else if (page === "users") {
+                await renderUsersPage();
+            } else if (page === "settings") {
                 await renderSettingsPage();
-                return;
-            }
-
-            if (page === 'auditlogs') {
+            } else if (page === "auditlogs") {
                 await renderAuditLogsPage();
+            } else if (page === "reports") {
+                await renderReportsPage();
+            }
+        } catch (error) {
+            console.error("NAVIGATION ERROR", error);
+
+            if (isUnauthorizedError(error)) {
+                clearSession();
+                hideApplication();
+                showLoginScreen();
+                showToast("Session หมดอายุ กรุณาเข้าสู่ระบบใหม่", "warning");
                 return;
             }
-
-            await renderEntityPage(page);
-        } catch (error) {
-            console.error(
-                'NAVIGATION ERROR:',
-                error
-            );
 
             showToast(
-                error.message ||
-                'ไม่สามารถโหลดข้อมูลหน้านี้ได้',
-                'error'
+                error.message || "ไม่สามารถโหลดข้อมูลหน้าเว็บได้",
+                "error"
             );
         }
     }
 
-    function openSidebarMobile() {
-        const sidebar =
-            $('.sidebar') ||
-            byId('sidebar');
+    function updateNavigationState(page) {
+        qsa("[data-page]").forEach(function (element) {
+            var target = element.getAttribute("data-page");
 
-        if (sidebar) {
-            sidebar.classList.add(
-                'mobile-open'
-            );
-        }
-
-        document.body.classList.add(
-            'sidebar-open'
-        );
-    }
-
-    function closeSidebarMobile() {
-        const sidebar =
-            $('.sidebar') ||
-            byId('sidebar');
-
-        if (sidebar) {
-            sidebar.classList.remove(
-                'mobile-open'
-            );
-        }
-
-        document.body.classList.remove(
-            'sidebar-open'
-        );
-    }
-
-    function toggleSidebar() {
-        const sidebar =
-            $('.sidebar') ||
-            byId('sidebar');
-
-        if (!sidebar) {
-            return;
-        }
-
-        if (
-            window.innerWidth <= 900
-        ) {
-            if (
-                sidebar.classList.contains(
-                    'mobile-open'
-                )
-            ) {
-                closeSidebarMobile();
+            if (target === page) {
+                element.classList.add("active");
+                element.setAttribute("aria-current", "page");
             } else {
-                openSidebarMobile();
+                element.classList.remove("active");
+                element.removeAttribute("aria-current");
+            }
+        });
+
+        qsa("[data-nav]").forEach(function (element) {
+            var target = element.getAttribute("data-nav");
+
+            if (target === page) {
+                element.classList.add("active");
+            } else {
+                element.classList.remove("active");
+            }
+        });
+    }
+
+    function showPageSection(page) {
+        var sections = qsa(
+            "[data-page-section], .page-section, section[id^='page-']"
+        );
+
+        sections.forEach(function (section) {
+            var sectionPage = section.getAttribute("data-page-section");
+
+            if (!sectionPage && section.id.indexOf("page-") === 0) {
+                sectionPage = section.id.substring(5);
             }
 
-            return;
-        }
+            if (sectionPage === page) {
+                showElement(section);
+            } else {
+                hideElement(section);
+            }
+        });
+    }
 
-        sidebar.classList.toggle(
-            'collapsed'
-        );
+    function setTextByIds(ids, value) {
+        ids.forEach(function (id) {
+            var element = byId(id);
 
-        document.body.classList.toggle(
-            'sidebar-collapsed'
-        );
+            if (element) {
+                element.textContent = safeText(value, "");
+            }
+        });
     }
 
     function getPageContainer(page) {
-        const possibleIds = [
-            'pageContent',
-            'mainContent',
-            'content',
-            'appContent',
-            'viewContainer',
-            'dynamicContent'
+        var candidates = [
+            "page-" + page + "-content",
+            page + "Content",
+            page + "PageContent",
+            "content-" + page,
+            "table-" + page,
+            page + "TableContainer"
         ];
 
-        for (
-            let index = 0;
-            index < possibleIds.length;
-            index += 1
-        ) {
-            const element =
-                byId(
-                    possibleIds[index]
-                );
+        for (var i = 0; i < candidates.length; i++) {
+            var element = byId(candidates[i]);
 
             if (element) {
                 return element;
             }
         }
 
-        const existingSection =
-            byId(
-                'page-' +
-                page
-            );
+        var section = byId("page-" + page);
 
-        if (existingSection) {
-            return existingSection;
-        }
+        if (section) {
+            var content = section.querySelector("[data-content]");
 
-        let container =
-            byId('generatedPageContent');
-
-        if (!container) {
-            container =
-                document.createElement(
-                    'main'
-                );
-
-            container.id =
-                'generatedPageContent';
-
-            container.className =
-                'generated-page-content';
-
-            document.body.appendChild(
-                container
-            );
-        }
-
-        return container;
-    }
-
-    function renderDashboardCards(data) {
-        const income =
-            parseNumber(
-                data.income ||
-                data.totalIncome ||
-                data.total_income
-            );
-
-        const expense =
-            parseNumber(
-                data.expense ||
-                data.totalExpense ||
-                data.total_expense
-            );
-
-        const transferIn =
-            parseNumber(
-                data.transferIn ||
-                data.totalTransferIn
-            );
-
-        const transferOut =
-            parseNumber(
-                data.transferOut ||
-                data.totalTransferOut
-            );
-
-        const net =
-            data.net !== undefined
-                ? parseNumber(data.net)
-                : income -
-                  expense;
-
-        const balance =
-            data.balance !== undefined
-                ? parseNumber(data.balance)
-                : net +
-                  transferIn -
-                  transferOut;
-
-        setTextByIds(
-            [
-                'dashboardIncome',
-                'totalIncome',
-                'incomeTotal'
-            ],
-            formatMoney(income)
-        );
-
-        setTextByIds(
-            [
-                'dashboardExpense',
-                'totalExpense',
-                'expenseTotal'
-            ],
-            formatMoney(expense)
-        );
-
-        setTextByIds(
-            [
-                'dashboardNet',
-                'netTotal'
-            ],
-            formatMoney(net)
-        );
-
-        setTextByIds(
-            [
-                'dashboardBalance',
-                'balanceTotal',
-                'cashBalance'
-            ],
-            formatMoney(balance)
-        );
-
-        setTextByIds(
-            [
-                'dashboardTransferIn',
-                'transferInTotal'
-            ],
-            formatMoney(transferIn)
-        );
-
-        setTextByIds(
-            [
-                'dashboardTransferOut',
-                'transferOutTotal'
-            ],
-            formatMoney(transferOut)
-        );
-    }
-
-    function setTextByIds(ids, value) {
-        ids.forEach(
-            function (id) {
-                const element =
-                    byId(id);
-
-                if (element) {
-                    element.textContent =
-                        value;
-                }
+            if (content) {
+                return content;
             }
-        );
-    }
 
-    async function renderDashboard() {
-        const container =
-            getPageContainer(
-                'dashboard'
-            );
-
-        const today =
-            toInputDate(
-                new Date()
-            );
-
-        const firstDay =
-            new Date();
-
-        firstDay.setDate(1);
-
-        const dateFrom =
-            toInputDate(firstDay);
-
-        const dateTo =
-            today;
-
-        const existingDashboard =
-            byId('page-dashboard');
-
-        if (
-            existingDashboard &&
-            existingDashboard.children.length
-        ) {
-            setLoading(
-                true,
-                'กำลังโหลดแดชบอร์ด...'
-            );
-        } else {
-            container.innerHTML =
-                createDashboardSkeleton();
+            return section;
         }
 
-        try {
-            const response =
-                await apiRequest(
-                    'dashboard',
-                    {
-                        dateFrom: dateFrom,
-                        dateTo: dateTo
-                    }
-                );
+        return null;
+    }
 
-            const data =
-                unwrapResponse(response) ||
-                {};
+    function findTableContainer(entity) {
+        var candidates = [
+            entity + "TableContainer",
+            entity + "Table",
+            "table" + capitalize(entity),
+            "dataTable",
+            "mainTableContainer"
+        ];
 
-            state.dashboardData =
-                data;
+        for (var i = 0; i < candidates.length; i++) {
+            var element = byId(candidates[i]);
 
-            renderDashboardCards(data);
-
-            renderDashboardHTML(
-                container,
-                data
-            );
-        } finally {
-            setLoading(false);
+            if (element) {
+                return element;
+            }
         }
+
+        return getPageContainer(entity);
     }
 
-    function createDashboardSkeleton() {
-        return (
-            '<section class="dashboard-page">' +
-            '<div class="dashboard-toolbar">' +
-            '<div>' +
-            '<h2>ภาพรวมทางการเงิน</h2>' +
-            '<p>ข้อมูลสรุปของกิจการ</p>' +
-            '</div>' +
-            '<div class="dashboard-actions">' +
-            '<button type="button" class="btn btn-primary" data-action="refresh-dashboard">รีเฟรช</button>' +
-            '</div>' +
-            '</div>' +
-            '<div class="dashboard-cards">' +
-            createStatCard(
-                'รายรับ',
-                'dashboardIncome',
-                '0.00'
-            ) +
-            createStatCard(
-                'รายจ่าย',
-                'dashboardExpense',
-                '0.00'
-            ) +
-            createStatCard(
-                'คงเหลือสุทธิ',
-                'dashboardNet',
-                '0.00'
-            ) +
-            createStatCard(
-                'ยอดคงเหลือ',
-                'dashboardBalance',
-                '0.00'
-            ) +
-            '</div>' +
-            '<div class="dashboard-grid">' +
-            '<div class="card">' +
-            '<div class="card-header">' +
-            '<h3>รายการล่าสุด</h3>' +
-            '</div>' +
-            '<div id="dashboardRecentTransactions" class="table-responsive"></div>' +
-            '</div>' +
-            '<div class="card">' +
-            '<div class="card-header">' +
-            '<h3>สรุปตามบัญชี</h3>' +
-            '</div>' +
-            '<div id="dashboardAccountsSummary" class="table-responsive"></div>' +
-            '</div>' +
-            '</div>' +
-            '</section>'
-        );
+    function capitalize(value) {
+        var text = String(value || "");
+
+        if (!text) {
+            return "";
+        }
+
+        return text.charAt(0).toUpperCase() + text.substring(1);
     }
 
-    function createStatCard(title, id, value) {
-        return (
-            '<div class="stat-card">' +
-            '<div class="stat-card-title">' +
-            escapeHtml(title) +
-            '</div>' +
-            '<div class="stat-card-value" id="' +
-            escapeHtml(id) +
-            '">' +
-            escapeHtml(value) +
-            '</div>' +
-            '<div class="stat-card-currency">บาท</div>' +
-            '</div>'
-        );
-    }
-
-    function renderDashboardHTML(container, data) {
+    function renderEmpty(container, message) {
         if (!container) {
             return;
         }
-
-        if (
-            !byId('dashboardIncome')
-        ) {
-            container.innerHTML =
-                createDashboardSkeleton();
-        }
-
-        renderDashboardCards(data);
-
-        const recent =
-            normalizeArray(
-                data.recentTransactions ||
-                data.transactions ||
-                data.recent
-            );
-
-        const accountSummary =
-            normalizeArray(
-                data.accounts ||
-                data.accountSummary ||
-                data.accountBalances
-            );
-
-        const recentContainer =
-            byId(
-                'dashboardRecentTransactions'
-            );
-
-        if (recentContainer) {
-            recentContainer.innerHTML =
-                renderTransactionMiniTable(
-                    recent
-                );
-        }
-
-        const accountContainer =
-            byId(
-                'dashboardAccountsSummary'
-            );
-
-        if (accountContainer) {
-            accountContainer.innerHTML =
-                renderAccountSummaryTable(
-                    accountSummary
-                );
-        }
-
-        renderDashboardChart(
-            data
-        );
-    }
-
-    function renderTransactionMiniTable(rows) {
-        if (!rows.length) {
-            return (
-                '<div class="empty-state">' +
-                '<div class="empty-icon">○</div>' +
-                '<div>ยังไม่มีรายการล่าสุด</div>' +
-                '</div>'
-            );
-        }
-
-        let html =
-            '<table class="data-table">' +
-            '<thead>' +
-            '<tr>' +
-            '<th>วันที่</th>' +
-            '<th>รายการ</th>' +
-            '<th>ประเภท</th>' +
-            '<th class="text-right">จำนวนเงิน</th>' +
-            '</tr>' +
-            '</thead>' +
-            '<tbody>';
-
-        rows.slice(0, 10).forEach(
-            function (row) {
-                const amount =
-                    parseNumber(
-                        row.amount ||
-                        row.total
-                    );
-
-                const type =
-                    row.type ||
-                    row.transactionType ||
-                    '';
-
-                html +=
-                    '<tr>' +
-                    '<td>' +
-                    escapeHtml(
-                        formatDate(
-                            row.date ||
-                            row.createdAt
-                        )
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.description ||
-                        row.name ||
-                        row.docNo ||
-                        '-'
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(type) +
-                    '</td>' +
-                    '<td class="text-right">' +
-                    escapeHtml(
-                        formatMoney(
-                            amount
-                        )
-                    ) +
-                    '</td>' +
-                    '</tr>';
-            }
-        );
-
-        html +=
-            '</tbody>' +
-            '</table>';
-
-        return html;
-    }
-
-    function renderAccountSummaryTable(rows) {
-        if (!rows.length) {
-            return (
-                '<div class="empty-state">' +
-                '<div>ยังไม่มีข้อมูลบัญชี</div>' +
-                '</div>'
-            );
-        }
-
-        let html =
-            '<table class="data-table">' +
-            '<thead>' +
-            '<tr>' +
-            '<th>รหัส</th>' +
-            '<th>บัญชี</th>' +
-            '<th>ประเภท</th>' +
-            '<th class="text-right">ยอดคงเหลือ</th>' +
-            '</tr>' +
-            '</thead>' +
-            '<tbody>';
-
-        rows.forEach(
-            function (row) {
-                html +=
-                    '<tr>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.code ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.name ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.type ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td class="text-right">' +
-                    escapeHtml(
-                        formatMoney(
-                            row.balance ||
-                            row.currentBalance ||
-                            row.amount
-                        )
-                    ) +
-                    '</td>' +
-                    '</tr>';
-            }
-        );
-
-        html +=
-            '</tbody>' +
-            '</table>';
-
-        return html;
-    }
-
-    function renderDashboardChart(data) {
-        if (
-            !window.Chart
-        ) {
-            return;
-        }
-
-        const canvas =
-            byId(
-                'dashboardChart'
-            );
-
-        if (!canvas) {
-            return;
-        }
-
-        const chartData =
-            data.chart ||
-            data.monthly ||
-            data.monthlySummary ||
-            {};
-
-        const labels =
-            chartData.labels ||
-            [];
-
-        const income =
-            chartData.income ||
-            [];
-
-        const expense =
-            chartData.expense ||
-            [];
-
-        if (
-            state.chartInstances.dashboard
-        ) {
-            state.chartInstances.dashboard.destroy();
-        }
-
-        state.chartInstances.dashboard =
-            new window.Chart(
-                canvas,
-                {
-                    type: 'bar',
-                    data: {
-                        labels: labels,
-                        datasets: [
-                            {
-                                label: 'รายรับ',
-                                data: income
-                            },
-                            {
-                                label: 'รายจ่าย',
-                                data: expense
-                            }
-                        ]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {
-                            legend: {
-                                position: 'bottom'
-                            }
-                        }
-                    }
-                }
-            );
-    }
-
-    async function renderEntityPage(page) {
-        const config =
-            ENTITY_CONFIG[page];
-
-        if (!config) {
-            return;
-        }
-
-        const container =
-            getPageContainer(page);
-
-        const filterState =
-            state.filters[page] ||
-            {};
 
         container.innerHTML =
-            createEntityPageHTML(
-                page,
-                config
-            );
-
-        applyEntityFiltersToForm(
-            page,
-            filterState
-        );
-
-        await loadEntityRows(
-            page,
-            1
-        );
+            '<div class="empty-state">' +
+            '<div class="empty-state-title">' +
+            escapeHtml(message || "ไม่พบข้อมูล") +
+            "</div>" +
+            "</div>";
     }
 
-    function createEntityPageHTML(page, config) {
-        let title =
-            config.title;
+    function createPageHeader(title, description, buttons) {
+        var buttonHtml = "";
 
-        let actionButton =
-            '';
-
-        if (
-            page !== 'users' ||
-            isAdmin()
-        ) {
-            actionButton =
-                '<button type="button" class="btn btn-primary" data-action="create" data-entity="' +
-                escapeHtml(page) +
-                '">' +
-                '＋ เพิ่มรายการ' +
-                '</button>';
+        if (Array.isArray(buttons)) {
+            buttons.forEach(function (button) {
+                buttonHtml +=
+                    '<button type="button" class="' +
+                    escapeAttribute(button.className || "btn btn-primary") +
+                    '" data-action="' +
+                    escapeAttribute(button.action || "") +
+                    '">' +
+                    escapeHtml(button.label || "ดำเนินการ") +
+                    "</button>";
+            });
         }
 
-        const filterHtml =
-            createEntityFilterHTML(
-                page
-            );
-
         return (
-            '<section class="entity-page" data-entity-page="' +
-            escapeHtml(page) +
-            '">' +
-            '<div class="page-toolbar">' +
-            '<div>' +
+            '<div class="page-header">' +
+            '<div class="page-header-text">' +
             '<h2>' +
             escapeHtml(title) +
-            '</h2>' +
-            '<p>' +
-            escapeHtml(
-                PAGE_CONFIG[page]
-                    ? PAGE_CONFIG[page].subtitle
-                    : ''
-            ) +
-            '</p>' +
-            '</div>' +
-            '<div class="toolbar-actions">' +
-            actionButton +
-            '<button type="button" class="btn btn-secondary" data-action="export-entity" data-entity="' +
-            escapeHtml(page) +
-            '">' +
-            'ส่งออก Excel' +
-            '</button>' +
-            '</div>' +
-            '</div>' +
-            filterHtml +
-            '<div class="card">' +
-            '<div class="card-body no-padding">' +
-            '<div id="entityTableContainer" class="table-responsive">' +
-            '<div class="loading-state">กำลังโหลดข้อมูล...</div>' +
-            '</div>' +
-            '</div>' +
-            '</div>' +
-            '<div id="entityPagination" class="pagination-container"></div>' +
-            '</section>'
+            "</h2>" +
+            '<div class="page-description">' +
+            escapeHtml(description || "") +
+            "</div>" +
+            "</div>" +
+            '<div class="page-header-actions">' +
+            buttonHtml +
+            "</div>" +
+            "</div>"
         );
     }
 
-    function createEntityFilterHTML(page) {
-        if (
-            page === 'income' ||
-            page === 'expense' ||
-            page === 'transfers'
-        ) {
-            return (
-                '<div class="card filter-card">' +
-                '<div class="filter-grid">' +
-                '<div class="form-group">' +
-                '<label>วันที่เริ่มต้น</label>' +
-                '<input type="date" id="filterDateFrom">' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label>วันที่สิ้นสุด</label>' +
-                '<input type="date" id="filterDateTo">' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label>ค้นหา</label>' +
-                '<input type="search" id="filterSearch" placeholder="เลขที่เอกสาร / รายการ / ชื่อ">' +
-                '</div>' +
-                '<div class="form-group filter-actions">' +
-                '<button type="button" class="btn btn-primary" data-action="apply-filter" data-entity="' +
-                escapeHtml(page) +
-                '">ค้นหา</button>' +
-                '<button type="button" class="btn btn-secondary" data-action="clear-filter" data-entity="' +
-                escapeHtml(page) +
-                '">ล้าง</button>' +
-                '</div>' +
-                '</div>' +
-                '</div>'
-            );
-        }
-
-        if (
-            page === 'documents'
-        ) {
-            return (
-                '<div class="card filter-card">' +
-                '<div class="filter-grid">' +
-                '<div class="form-group">' +
-                '<label>วันที่เริ่มต้น</label>' +
-                '<input type="date" id="filterDateFrom">' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label>วันที่สิ้นสุด</label>' +
-                '<input type="date" id="filterDateTo">' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label>ประเภทเอกสาร</label>' +
-                '<select id="filterDocumentType">' +
-                '<option value="">ทั้งหมด</option>' +
-                createDocumentTypeOptions('') +
-                '</select>' +
-                '</div>' +
-                '<div class="form-group">' +
-                '<label>ค้นหา</label>' +
-                '<input type="search" id="filterSearch" placeholder="เลขที่เอกสาร / ลูกค้า">' +
-                '</div>' +
-                '<div class="form-group filter-actions">' +
-                '<button type="button" class="btn btn-primary" data-action="apply-filter" data-entity="' +
-                escapeHtml(page) +
-                '">ค้นหา</button>' +
-                '<button type="button" class="btn btn-secondary" data-action="clear-filter" data-entity="' +
-                escapeHtml(page) +
-                '">ล้าง</button>' +
-                '</div>' +
-                '</div>' +
-                '</div>'
-            );
-        }
-
+    function createSearchBar(placeholder, action, exportAction) {
         return (
-            '<div class="card filter-card">' +
-            '<div class="filter-grid">' +
-            '<div class="form-group form-group-wide">' +
-            '<label>ค้นหา</label>' +
-            '<input type="search" id="filterSearch" placeholder="ค้นหา">' +
-            '</div>' +
-            '<div class="form-group filter-actions">' +
-            '<button type="button" class="btn btn-primary" data-action="apply-filter" data-entity="' +
-            escapeHtml(page) +
+            '<div class="toolbar">' +
+            '<div class="toolbar-search">' +
+            '<input type="search" class="form-control" ' +
+            'placeholder="' +
+            escapeAttribute(placeholder || "ค้นหา") +
+            '" data-search-input="' +
+            escapeAttribute(action || "") +
+            '">' +
+            "</div>" +
+            '<div class="toolbar-actions">' +
+            '<button type="button" class="btn btn-secondary" data-action="' +
+            escapeAttribute(action || "") +
             '">ค้นหา</button>' +
-            '<button type="button" class="btn btn-secondary" data-action="clear-filter" data-entity="' +
-            escapeHtml(page) +
-            '">ล้าง</button>' +
-            '</div>' +
-            '</div>' +
-            '</div>'
+            (
+                exportAction ?
+                '<button type="button" class="btn btn-secondary" data-action="' +
+                escapeAttribute(exportAction) +
+                '">ส่งออก Excel</button>' :
+                ""
+            ) +
+            "</div>" +
+            "</div>"
         );
     }
 
-    function createDocumentTypeOptions(selected) {
-        const types =
-            state.documentTypes.length
-                ? state.documentTypes
-                : DOCUMENT_TYPES;
-
-        let html = '';
-
-        types.forEach(
-            function (type) {
-                const code =
-                    type.code ||
-                    type.id ||
-                    '';
-
-                const name =
-                    type.name ||
-                    type.label ||
-                    code;
-
-                html +=
-                    '<option value="' +
-                    escapeHtml(code) +
-                    '"' +
-                    (
-                        code === selected
-                            ? ' selected'
-                            : ''
-                    ) +
-                    '>' +
-                    escapeHtml(name) +
-                    '</option>';
-            }
-        );
-
-        return html;
-    }
-
-    function applyEntityFiltersToForm(page, filters) {
-        const dateFrom =
-            byId('filterDateFrom');
-
-        const dateTo =
-            byId('filterDateTo');
-
-        const search =
-            byId('filterSearch');
-
-        const documentType =
-            byId('filterDocumentType');
-
-        if (dateFrom) {
-            dateFrom.value =
-                filters.dateFrom ||
-                '';
-        }
-
-        if (dateTo) {
-            dateTo.value =
-                filters.dateTo ||
-                '';
-        }
-
-        if (search) {
-            search.value =
-                filters.search ||
-                '';
-        }
-
-        if (documentType) {
-            documentType.value =
-                filters.documentType ||
-                '';
-        }
-    }
-
-    async function loadEntityRows(page, pageNumber) {
-        const config =
-            ENTITY_CONFIG[page];
-
-        if (!config) {
-            return;
-        }
-
-        const tableContainer =
-            byId(
-                'entityTableContainer'
-            );
-
-        if (tableContainer) {
-            tableContainer.innerHTML =
-                '<div class="loading-state">กำลังโหลดข้อมูล...</div>';
-        }
-
-        const filters =
-            state.filters[page] ||
-            {};
-
-        const payload = {
-            entity: page,
-            sheet: config.sheet,
-            page: pageNumber,
-            pageSize: state.pageSize,
-            filters: filters
-        };
-
-        const response =
-            await apiRequest(
-                'list',
-                payload
-            );
-
-        const data =
-            unwrapResponse(response);
-
-        let rows = [];
-        let total = 0;
-
-        if (Array.isArray(data)) {
-            rows = data;
-            total = data.length;
-        } else if (data) {
-            rows =
-                normalizeArray(
-                    data.rows ||
-                    data.items ||
-                    data.records
-                );
-
-            total =
-                parseNumber(
-                    data.total ||
-                    data.totalRows ||
-                    data.count
-                );
-
-            if (!total) {
-                total = rows.length;
-            }
-        }
-
-        state.currentRows = rows;
-        state.currentEntity = page;
-        state.currentPageNumber =
-            pageNumber;
-        state.totalRows = total;
-
-        renderEntityTable(
-            page,
-            rows
-        );
-
-        renderPagination(
-            page,
-            pageNumber,
-            total
-        );
-    }
-
-    function renderEntityTable(page, rows) {
-        const container =
-            byId(
-                'entityTableContainer'
-            );
-
+    function renderTable(container, columns, rows, options) {
         if (!container) {
             return;
         }
 
-        if (!rows.length) {
-            container.innerHTML =
-                '<div class="empty-state">' +
-                '<div class="empty-icon">○</div>' +
-                '<h3>ยังไม่มีข้อมูล</h3>' +
-                '<p>ยังไม่พบรายการในระบบ</p>' +
-                '</div>';
+        var settings = options || {};
+        var data = Array.isArray(rows) ? rows : [];
 
+        if (!data.length) {
+            renderEmpty(container, settings.emptyMessage || "ไม่พบข้อมูล");
             return;
         }
 
-        let html = '';
+        var html = "";
 
-        if (page === 'income') {
-            html =
-                renderIncomeTable(
-                    rows
-                );
-        } else if (page === 'expense') {
-            html =
-                renderExpenseTable(
-                    rows
-                );
-        } else if (page === 'transfers') {
-            html =
-                renderTransferTable(
-                    rows
-                );
-        } else if (page === 'accounts') {
-            html =
-                renderAccountsTable(
-                    rows
-                );
-        } else if (page === 'categories') {
-            html =
-                renderCategoriesTable(
-                    rows
-                );
-        } else if (page === 'customers') {
-            html =
-                renderCustomersTable(
-                    rows
-                );
-        } else if (page === 'vendors') {
-            html =
-                renderVendorsTable(
-                    rows
-                );
-        } else if (page === 'documents') {
-            html =
-                renderDocumentsTable(
-                    rows
-                );
-        } else if (page === 'users') {
-            html =
-                renderUsersTable(
-                    rows
-                );
-        } else {
-            html =
-                renderGenericTable(
-                    rows,
-                    page
-                );
+        html += '<div class="table-responsive">';
+        html += '<table class="data-table">';
+        html += "<thead>";
+        html += "<tr>";
+
+        columns.forEach(function (column) {
+            html +=
+                '<th class="' +
+                escapeAttribute(column.className || "") +
+                '">' +
+                escapeHtml(column.label || "") +
+                "</th>";
+        });
+
+        if (settings.actions) {
+            html += '<th class="table-actions-header">จัดการ</th>';
         }
+
+        html += "</tr>";
+        html += "</thead>";
+        html += "<tbody>";
+
+        data.forEach(function (row, index) {
+            html += "<tr>";
+
+            columns.forEach(function (column) {
+                var value = "";
+
+                if (typeof column.render === "function") {
+                    value = column.render(row, index);
+                } else {
+                    value = row[column.key];
+                }
+
+                html +=
+                    '<td class="' +
+                    escapeAttribute(column.className || "") +
+                    '">' +
+                    safeHtmlValue(value) +
+                    "</td>";
+            });
+
+            if (settings.actions) {
+                html += '<td class="table-actions">';
+
+                if (settings.actions.edit !== false) {
+                    html +=
+                        '<button type="button" class="btn btn-sm btn-secondary" ' +
+                        'data-action="' +
+                        escapeAttribute(settings.actions.editAction || "edit-record") +
+                        '" data-id="' +
+                        escapeAttribute(getRowId(row)) +
+                        '">แก้ไข</button>';
+                }
+
+                if (settings.actions.delete !== false) {
+                    html +=
+                        '<button type="button" class="btn btn-sm btn-danger" ' +
+                        'data-action="' +
+                        escapeAttribute(settings.actions.deleteAction || "delete-record") +
+                        '" data-id="' +
+                        escapeAttribute(getRowId(row)) +
+                        '">ลบ</button>';
+                }
+
+                html += "</td>";
+            }
+
+            html += "</tr>";
+        });
+
+        html += "</tbody>";
+        html += "</table>";
+        html += "</div>";
 
         container.innerHTML = html;
     }
 
-    function renderIncomeTable(rows) {
-        let html =
-            '<table class="data-table">' +
-            '<thead>' +
-            '<tr>' +
-            '<th>วันที่</th>' +
-            '<th>เลขที่เอกสาร</th>' +
-            '<th>บัญชี</th>' +
-            '<th>หมวดหมู่</th>' +
-            '<th>รายการ</th>' +
-            '<th>ช่องทางชำระ</th>' +
-            '<th class="text-right">จำนวนเงิน</th>' +
-            '<th class="text-center">จัดการ</th>' +
-            '</tr>' +
-            '</thead>' +
-            '<tbody>';
+    function safeHtmlValue(value) {
+        if (value === null || value === undefined) {
+            return "";
+        }
 
-        rows.forEach(
-            function (row) {
+        if (typeof value === "string" && value.indexOf("<") !== -1) {
+            return value;
+        }
+
+        return escapeHtml(value);
+    }
+
+    function getRowId(row) {
+        if (!row) {
+            return "";
+        }
+
+        return String(
+            row.id ||
+            row.ID ||
+            row._id ||
+            row.uuid ||
+            ""
+        );
+    }
+
+    function getRecordById(rows, id) {
+        var list = Array.isArray(rows) ? rows : [];
+
+        for (var i = 0; i < list.length; i++) {
+            if (String(getRowId(list[i])) === String(id)) {
+                return list[i];
+            }
+        }
+
+        return null;
+    }
+
+    async function listEntity(entity, filters) {
+        var response = await apiRequest(
+            "list",
+            {
+                entity: entity,
+                filters: filters || {}
+            },
+            {
+                includeToken: true
+            }
+        );
+
+        if (!responseSuccess(response)) {
+            throw createError(
+                extractMessage(response),
+                0,
+                "LIST_FAILED",
+                response
+            );
+        }
+
+        var data = normalizeResponse(response);
+
+        if (data.data !== undefined) {
+            data = parseMaybeJson(data.data);
+        }
+
+        if (data.result !== undefined) {
+            data = parseMaybeJson(data.result);
+        }
+
+        if (data.rows !== undefined) {
+            data = data.rows;
+        }
+
+        if (data.items !== undefined) {
+            data = data.items;
+        }
+
+        return normalizeArray(data);
+    }
+
+    async function getEntity(entity, id) {
+        var response = await apiRequest(
+            "get",
+            {
+                entity: entity,
+                id: id
+            },
+            {
+                includeToken: true
+            }
+        );
+
+        if (!responseSuccess(response)) {
+            throw createError(
+                extractMessage(response),
+                0,
+                "GET_FAILED",
+                response
+            );
+        }
+
+        var data = normalizeResponse(response);
+
+        if (data.data !== undefined) {
+            data = parseMaybeJson(data.data);
+        }
+
+        if (data.result !== undefined) {
+            data = parseMaybeJson(data.result);
+        }
+
+        return data;
+    }
+
+    async function createEntity(entity, data) {
+        var response = await apiRequest(
+            "create",
+            {
+                entity: entity,
+                data: data
+            },
+            {
+                includeToken: true
+            }
+        );
+
+        if (!responseSuccess(response)) {
+            throw createError(
+                extractMessage(response),
+                0,
+                "CREATE_FAILED",
+                response
+            );
+        }
+
+        return response;
+    }
+
+    async function updateEntity(entity, id, data) {
+        var response = await apiRequest(
+            "update",
+            {
+                entity: entity,
+                id: id,
+                data: data
+            },
+            {
+                includeToken: true
+            }
+        );
+
+        if (!responseSuccess(response)) {
+            throw createError(
+                extractMessage(response),
+                0,
+                "UPDATE_FAILED",
+                response
+            );
+        }
+
+        return response;
+    }
+
+    async function deleteEntity(entity, id) {
+        var response = await apiRequest(
+            "delete",
+            {
+                entity: entity,
+                id: id
+            },
+            {
+                includeToken: true
+            }
+        );
+
+        if (!responseSuccess(response)) {
+            throw createError(
+                extractMessage(response),
+                0,
+                "DELETE_FAILED",
+                response
+            );
+        }
+
+        return response;
+    }
+
+    async function renderDashboard() {
+        var container = getPageContainer("dashboard");
+
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML =
+            createPageHeader(
+                "แดชบอร์ด",
+                "ภาพรวมข้อมูลทางการเงินของกิจการ",
+                [
+                    {
+                        label: "รีเฟรช",
+                        action: "refresh-dashboard",
+                        className: "btn btn-secondary"
+                    }
+                ]
+            ) +
+            '<div class="dashboard-loading">กำลังโหลดข้อมูล...</div>';
+
+        var dateFrom = getFilterDate("dashboardDateFrom", "start");
+        var dateTo = getFilterDate("dashboardDateTo", "end");
+
+        try {
+            var response = await apiRequest(
+                "dashboard",
+                {
+                    dateFrom: dateFrom,
+                    dateTo: dateTo
+                },
+                {
+                    includeToken: true
+                }
+            );
+
+            if (!responseSuccess(response)) {
+                throw createError(
+                    extractMessage(response),
+                    0,
+                    "DASHBOARD_FAILED",
+                    response
+                );
+            }
+
+            var data = normalizeResponse(response);
+
+            if (data.data && typeof data.data === "object") {
+                data = data.data;
+            }
+
+            if (data.result && typeof data.result === "object") {
+                data = data.result;
+            }
+
+            state.dashboardData = data;
+
+            renderDashboardContent(container, data);
+        } catch (error) {
+            console.error("DASHBOARD ERROR", error);
+
+            container.innerHTML =
+                createPageHeader(
+                    "แดชบอร์ด",
+                    "ภาพรวมข้อมูลทางการเงินของกิจการ",
+                    [
+                        {
+                            label: "ลองใหม่",
+                            action: "refresh-dashboard",
+                            className: "btn btn-secondary"
+                        }
+                    ]
+                ) +
+                '<div class="error-state">' +
+                escapeHtml(error.message || "ไม่สามารถโหลด Dashboard ได้") +
+                "</div>";
+
+            throw error;
+        }
+    }
+
+    function getFilterDate(id, type) {
+        var element = byId(id);
+
+        if (element && element.value) {
+            return element.value;
+        }
+
+        var now = new Date();
+
+        if (type === "start") {
+            return now.getFullYear() +
+                "-" +
+                String(now.getMonth() + 1).padStart(2, "0") +
+                "-01";
+        }
+
+        return now.getFullYear() +
+            "-" +
+            String(now.getMonth() + 1).padStart(2, "0") +
+            "-" +
+            String(now.getDate()).padStart(2, "0");
+    }
+
+    function extractNumber(data, keys) {
+        if (!data || typeof data !== "object") {
+            return 0;
+        }
+
+        for (var i = 0; i < keys.length; i++) {
+            var key = keys[i];
+
+            if (data[key] !== undefined && data[key] !== null) {
+                var number = parseNumber(data[key]);
+
+                if (number !== 0 || String(data[key]) === "0") {
+                    return number;
+                }
+            }
+        }
+
+        return 0;
+    }
+
+    function renderDashboardContent(container, data) {
+        var income = extractNumber(
+            data,
+            [
+                "income",
+                "totalIncome",
+                "incomeTotal",
+                "totalRevenue",
+                "revenue"
+            ]
+        );
+
+        var expense = extractNumber(
+            data,
+            [
+                "expense",
+                "totalExpense",
+                "expenseTotal",
+                "totalExpenses"
+            ]
+        );
+
+        var net = extractNumber(
+            data,
+            [
+                "net",
+                "netIncome",
+                "profit",
+                "balance"
+            ]
+        );
+
+        if (!net) {
+            net = income - expense;
+        }
+
+        var balance = extractNumber(
+            data,
+            [
+                "balance",
+                "cashBalance",
+                "totalBalance",
+                "accountBalance"
+            ]
+        );
+
+        var accounts = normalizeArray(
+            data.accounts ||
+            data.accountBalances ||
+            data.balances
+        );
+
+        var transactions = normalizeArray(
+            data.recentTransactions ||
+            data.transactions ||
+            data.recent
+        );
+
+        var html = "";
+
+        html += createPageHeader(
+            "แดชบอร์ด",
+            "ภาพรวมข้อมูลทางการเงินของกิจการ",
+            [
+                {
+                    label: "รีเฟรช",
+                    action: "refresh-dashboard",
+                    className: "btn btn-secondary"
+                }
+            ]
+        );
+
+        html +=
+            '<div class="dashboard-filters">' +
+            '<div class="form-group">' +
+            "<label>ตั้งแต่วันที่</label>" +
+            '<input type="date" class="form-control" id="dashboardDateFrom" value="' +
+            escapeAttribute(getFilterDate("dashboardDateFrom", "start")) +
+            '">' +
+            "</div>" +
+            '<div class="form-group">' +
+            "<label>ถึงวันที่</label>" +
+            '<input type="date" class="form-control" id="dashboardDateTo" value="' +
+            escapeAttribute(getFilterDate("dashboardDateTo", "end")) +
+            '">' +
+            "</div>" +
+            '<div class="form-group form-group-button">' +
+            '<button type="button" class="btn btn-primary" data-action="refresh-dashboard">ค้นหา</button>' +
+            "</div>" +
+            "</div>";
+
+        html += '<div class="dashboard-cards">';
+
+        html += createDashboardCard(
+            "รายรับ",
+            income,
+            "income",
+            "dashboard-income"
+        );
+
+        html += createDashboardCard(
+            "รายจ่าย",
+            expense,
+            "expense",
+            "dashboard-expense"
+        );
+
+        html += createDashboardCard(
+            "คงเหลือสุทธิ",
+            net,
+            "net",
+            "dashboard-net"
+        );
+
+        html += createDashboardCard(
+            "ยอดคงเหลือ",
+            balance,
+            "balance",
+            "dashboard-balance"
+        );
+
+        html += "</div>";
+
+        html +=
+            '<div class="dashboard-grid">';
+
+        html +=
+            '<div class="dashboard-panel">' +
+            '<div class="panel-header">' +
+            "<h3>ยอดเงินตามบัญชี</h3>" +
+            "</div>" +
+            '<div class="panel-body">';
+
+        if (accounts.length) {
+            html += '<div class="mini-table">';
+
+            accounts.forEach(function (account) {
+                var name = safeText(
+                    account.name ||
+                    account.accountName,
+                    "-"
+                );
+
+                var amount = extractNumber(
+                    account,
+                    [
+                        "balance",
+                        "amount",
+                        "currentBalance"
+                    ]
+                );
+
                 html +=
-                    '<tr>' +
-                    '<td>' +
+                    '<div class="mini-table-row">' +
+                    "<div>" +
+                    escapeHtml(name) +
+                    "</div>" +
+                    "<strong>" +
+                    formatMoney(amount) +
+                    " บาท</strong>" +
+                    "</div>";
+            });
+
+            html += "</div>";
+        } else {
+            html += '<div class="empty-state">ไม่มีข้อมูลบัญชี</div>';
+        }
+
+        html += "</div>";
+        html += "</div>";
+
+        html +=
+            '<div class="dashboard-panel">' +
+            '<div class="panel-header">' +
+            "<h3>รายการล่าสุด</h3>" +
+            "</div>" +
+            '<div class="panel-body">';
+
+        if (transactions.length) {
+            html += '<div class="mini-table">';
+
+            transactions.slice(0, 10).forEach(function (transaction) {
+                var description = safeText(
+                    transaction.description ||
+                    transaction.detail ||
+                    transaction.name,
+                    "-"
+                );
+
+                var amount = extractNumber(
+                    transaction,
+                    [
+                        "amount",
+                        "total",
+                        "value"
+                    ]
+                );
+
+                html +=
+                    '<div class="mini-table-row">' +
+                    "<div>" +
+                    "<div>" +
+                    escapeHtml(description) +
+                    "</div>" +
+                    '<small>' +
                     escapeHtml(
                         formatDate(
-                            row.date
+                            transaction.date ||
+                            transaction.createdAt
                         )
                     ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.docNo ||
-                        row.documentNo ||
-                        '-'
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        getAccountName(
-                            row.accountId ||
-                            row.account
-                        )
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        getCategoryName(
-                            row.categoryId ||
-                            row.category
-                        )
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.description ||
-                        row.counterpartyName ||
-                        '-'
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.paymentMethod ||
-                        '-'
-                    ) +
-                    '</td>' +
-                    '<td class="text-right amount-income">' +
-                    escapeHtml(
-                        formatMoney(
-                            row.amount
-                        )
-                    ) +
-                    '</td>' +
-                    '<td class="text-center">' +
-                    createRowActions(
-                        'income',
-                        row
-                    ) +
-                    '</td>' +
-                    '</tr>';
-            }
-        );
+                    "</small>" +
+                    "</div>" +
+                    "<strong>" +
+                    formatMoney(amount) +
+                    " บาท</strong>" +
+                    "</div>";
+            });
 
-        html +=
-            '</tbody></table>';
+            html += "</div>";
+        } else {
+            html += '<div class="empty-state">ยังไม่มีรายการล่าสุด</div>';
+        }
 
-        return html;
+        html += "</div>";
+        html += "</div>";
+        html += "</div>";
+
+        container.innerHTML = html;
     }
 
-    function renderExpenseTable(rows) {
-        let html =
-            '<table class="data-table">' +
-            '<thead>' +
-            '<tr>' +
-            '<th>วันที่</th>' +
-            '<th>เลขที่เอกสาร</th>' +
-            '<th>บัญชี</th>' +
-            '<th>หมวดหมู่</th>' +
-            '<th>รายการ</th>' +
-            '<th>ช่องทางชำระ</th>' +
-            '<th class="text-right">จำนวนเงิน</th>' +
-            '<th class="text-center">จัดการ</th>' +
-            '</tr>' +
-            '</thead>' +
-            '<tbody>';
-
-        rows.forEach(
-            function (row) {
-                html +=
-                    '<tr>' +
-                    '<td>' +
-                    escapeHtml(
-                        formatDate(
-                            row.date
-                        )
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.docNo ||
-                        row.documentNo ||
-                        '-'
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        getAccountName(
-                            row.accountId ||
-                            row.account
-                        )
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        getCategoryName(
-                            row.categoryId ||
-                            row.category
-                        )
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.description ||
-                        row.counterpartyName ||
-                        '-'
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.paymentMethod ||
-                        '-'
-                    ) +
-                    '</td>' +
-                    '<td class="text-right amount-expense">' +
-                    escapeHtml(
-                        formatMoney(
-                            row.amount
-                        )
-                    ) +
-                    '</td>' +
-                    '<td class="text-center">' +
-                    createRowActions(
-                        'expense',
-                        row
-                    ) +
-                    '</td>' +
-                    '</tr>';
-            }
+    function createDashboardCard(title, amount, type, id) {
+        return (
+            '<div class="dashboard-card dashboard-card-' +
+            escapeAttribute(type) +
+            '" id="' +
+            escapeAttribute(id) +
+            '">' +
+            '<div class="dashboard-card-title">' +
+            escapeHtml(title) +
+            "</div>" +
+            '<div class="dashboard-card-value">' +
+            formatMoney(amount) +
+            "</div>" +
+            '<div class="dashboard-card-unit">บาท</div>' +
+            "</div>"
         );
-
-        html +=
-            '</tbody></table>';
-
-        return html;
     }
 
-    function renderTransferTable(rows) {
-        let html =
-            '<table class="data-table">' +
-            '<thead>' +
-            '<tr>' +
-            '<th>วันที่</th>' +
-            '<th>เลขที่เอกสาร</th>' +
-            '<th>จากบัญชี</th>' +
-            '<th>ไปบัญชี</th>' +
-            '<th>รายละเอียด</th>' +
-            '<th class="text-right">จำนวนเงิน</th>' +
-            '<th class="text-center">จัดการ</th>' +
-            '</tr>' +
-            '</thead>' +
-            '<tbody>';
+    async function renderIncomePage() {
+        var container = getPageContainer("income");
 
-        rows.forEach(
-            function (row) {
-                html +=
-                    '<tr>' +
-                    '<td>' +
-                    escapeHtml(
-                        formatDate(
-                            row.date
-                        )
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.docNo ||
-                        row.documentNo ||
-                        '-'
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        getAccountName(
-                            row.fromAccountId ||
-                            row.fromAccount
-                        )
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        getAccountName(
-                            row.toAccountId ||
-                            row.toAccount
-                        )
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.description ||
-                        '-'
-                    ) +
-                    '</td>' +
-                    '<td class="text-right">' +
-                    escapeHtml(
-                        formatMoney(
-                            row.amount
-                        )
-                    ) +
-                    '</td>' +
-                    '<td class="text-center">' +
-                    createRowActions(
-                        'transfers',
-                        row
-                    ) +
-                    '</td>' +
-                    '</tr>';
-            }
-        );
+        if (!container) {
+            return;
+        }
 
-        html +=
-            '</tbody></table>';
+        container.innerHTML =
+            createPageHeader(
+                "รายรับ",
+                "บันทึกและจัดการรายการรายรับ",
+                [
+                    {
+                        label: "เพิ่มรายรับ",
+                        action: "add-income",
+                        className: "btn btn-primary"
+                    },
+                    {
+                        label: "ส่งออก Excel",
+                        action: "export-income-xlsx",
+                        className: "btn btn-secondary"
+                    }
+                ]
+            ) +
+            createSearchBar(
+                "ค้นหาเลขที่เอกสาร ชื่อรายการ หรือผู้ติดต่อ",
+                "search-income",
+                ""
+            ) +
+            '<div id="incomeTableContainer"></div>';
 
-        return html;
+        await loadAndRenderIncome();
     }
 
-    function renderAccountsTable(rows) {
-        let html =
-            '<table class="data-table">' +
-            '<thead>' +
-            '<tr>' +
-            '<th>รหัสบัญชี</th>' +
-            '<th>ชื่อบัญชี</th>' +
-            '<th>ประเภท</th>' +
-            '<th class="text-right">ยอดยกมา</th>' +
-            '<th>สถานะ</th>' +
-            '<th>รายละเอียด</th>' +
-            '<th class="text-center">จัดการ</th>' +
-            '</tr>' +
-            '</thead>' +
-            '<tbody>';
+    async function loadAndRenderIncome(filters) {
+        var container = byId("incomeTableContainer") ||
+            findTableContainer("income");
 
-        rows.forEach(
-            function (row) {
-                html +=
-                    '<tr>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.code ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.name ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.type ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td class="text-right">' +
-                    escapeHtml(
-                        formatMoney(
-                            row.openingBalance
-                        )
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    renderStatus(
-                        row.active
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.description ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td class="text-center">' +
-                    createRowActions(
-                        'accounts',
-                        row
-                    ) +
-                    '</td>' +
-                    '</tr>';
-            }
-        );
+        if (!container) {
+            return;
+        }
 
-        html +=
-            '</tbody></table>';
+        container.innerHTML =
+            '<div class="loading-state">กำลังโหลดข้อมูลรายรับ...</div>';
 
-        return html;
-    }
+        var rows = await listEntity("Income", filters || {});
 
-    function renderCategoriesTable(rows) {
-        let html =
-            '<table class="data-table">' +
-            '<thead>' +
-            '<tr>' +
-            '<th>รหัส</th>' +
-            '<th>ชื่อหมวดหมู่</th>' +
-            '<th>ประเภท</th>' +
-            '<th>สถานะ</th>' +
-            '<th>รายละเอียด</th>' +
-            '<th class="text-center">จัดการ</th>' +
-            '</tr>' +
-            '</thead>' +
-            '<tbody>';
+        state.currentEntity = "Income";
+        state.currentData = rows;
 
-        rows.forEach(
-            function (row) {
-                html +=
-                    '<tr>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.code ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.name ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.type ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    renderStatus(
-                        row.active
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.description ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td class="text-center">' +
-                    createRowActions(
-                        'categories',
-                        row
-                    ) +
-                    '</td>' +
-                    '</tr>';
-            }
-        );
-
-        html +=
-            '</tbody></table>';
-
-        return html;
-    }
-
-    function renderCustomersTable(rows) {
-        return renderPartyTable(
+        renderTable(
+            container,
+            [
+                {
+                    label: "วันที่",
+                    key: "date",
+                    render: function (row) {
+                        return formatDate(row.date);
+                    }
+                },
+                {
+                    label: "เลขที่เอกสาร",
+                    key: "docNo"
+                },
+                {
+                    label: "รายการ",
+                    key: "description"
+                },
+                {
+                    label: "ผู้ติดต่อ",
+                    key: "counterparty"
+                },
+                {
+                    label: "จำนวนเงิน",
+                    key: "amount",
+                    className: "text-right",
+                    render: function (row) {
+                        return formatMoney(row.amount);
+                    }
+                },
+                {
+                    label: "วิธีชำระ",
+                    key: "paymentMethod",
+                    render: function (row) {
+                        return paymentMethodLabel(row.paymentMethod);
+                    }
+                }
+            ],
             rows,
-            'customers'
-        );
-    }
-
-    function renderVendorsTable(rows) {
-        return renderPartyTable(
-            rows,
-            'vendors'
-        );
-    }
-
-    function renderPartyTable(rows, entity) {
-        let html =
-            '<table class="data-table">' +
-            '<thead>' +
-            '<tr>' +
-            '<th>รหัส</th>' +
-            '<th>ชื่อ</th>' +
-            '<th>เลขประจำตัวผู้เสียภาษี</th>' +
-            '<th>ผู้ติดต่อ</th>' +
-            '<th>โทรศัพท์</th>' +
-            '<th>อีเมล</th>' +
-            '<th>สถานะ</th>' +
-            '<th class="text-center">จัดการ</th>' +
-            '</tr>' +
-            '</thead>' +
-            '<tbody>';
-
-        rows.forEach(
-            function (row) {
-                html +=
-                    '<tr>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.code ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.name ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.taxId ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.contactPerson ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.phone ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.email ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    renderStatus(
-                        row.active
-                    ) +
-                    '</td>' +
-                    '<td class="text-center">' +
-                    createRowActions(
-                        entity,
-                        row
-                    ) +
-                    '</td>' +
-                    '</tr>';
+            {
+                actions: {
+                    editAction: "edit-income",
+                    deleteAction: "delete-income"
+                },
+                emptyMessage: "ยังไม่มีรายการรายรับ"
             }
         );
-
-        html +=
-            '</tbody></table>';
-
-        return html;
     }
 
-    function renderDocumentsTable(rows) {
-        let html =
-            '<table class="data-table">' +
-            '<thead>' +
-            '<tr>' +
-            '<th>วันที่</th>' +
-            '<th>เลขที่เอกสาร</th>' +
-            '<th>ประเภท</th>' +
-            '<th>ลูกค้า / ผู้จำหน่าย</th>' +
-            '<th>สถานะ</th>' +
-            '<th class="text-right">ยอดรวม</th>' +
-            '<th class="text-center">จัดการ</th>' +
-            '</tr>' +
-            '</thead>' +
-            '<tbody>';
+    async function renderExpensePage() {
+        var container = getPageContainer("expense");
 
-        rows.forEach(
-            function (row) {
-                const type =
-                    getDocumentTypeName(
-                        row.docType ||
-                        row.documentType ||
-                        row.type
-                    );
+        if (!container) {
+            return;
+        }
 
-                html +=
-                    '<tr>' +
-                    '<td>' +
-                    escapeHtml(
-                        formatDate(
-                            row.date
-                        )
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.docNo ||
-                        row.documentNo ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        type
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.partyName ||
-                        row.customerName ||
-                        row.vendorName ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    renderDocumentStatus(
-                        row.status
-                    ) +
-                    '</td>' +
-                    '<td class="text-right">' +
-                    escapeHtml(
-                        formatMoney(
+        container.innerHTML =
+            createPageHeader(
+                "รายจ่าย",
+                "บันทึกและจัดการรายการรายจ่าย",
+                [
+                    {
+                        label: "เพิ่มรายจ่าย",
+                        action: "add-expense",
+                        className: "btn btn-primary"
+                    },
+                    {
+                        label: "ส่งออก Excel",
+                        action: "export-expense-xlsx",
+                        className: "btn btn-secondary"
+                    }
+                ]
+            ) +
+            createSearchBar(
+                "ค้นหาเลขที่เอกสาร รายการ หรือผู้จำหน่าย",
+                "search-expense",
+                ""
+            ) +
+            '<div id="expenseTableContainer"></div>';
+
+        await loadAndRenderExpense();
+    }
+
+    async function loadAndRenderExpense(filters) {
+        var container = byId("expenseTableContainer") ||
+            findTableContainer("expense");
+
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML =
+            '<div class="loading-state">กำลังโหลดข้อมูลรายจ่าย...</div>';
+
+        var rows = await listEntity("Expenses", filters || {});
+
+        if (!rows.length) {
+            rows = await listEntity("Expense", filters || {});
+        }
+
+        state.currentEntity = "Expenses";
+        state.currentData = rows;
+
+        renderTable(
+            container,
+            [
+                {
+                    label: "วันที่",
+                    key: "date",
+                    render: function (row) {
+                        return formatDate(row.date);
+                    }
+                },
+                {
+                    label: "เลขที่เอกสาร",
+                    key: "docNo"
+                },
+                {
+                    label: "รายการ",
+                    key: "description"
+                },
+                {
+                    label: "ผู้จำหน่าย",
+                    key: "counterparty"
+                },
+                {
+                    label: "จำนวนเงิน",
+                    key: "amount",
+                    className: "text-right",
+                    render: function (row) {
+                        return formatMoney(row.amount);
+                    }
+                },
+                {
+                    label: "วิธีชำระ",
+                    key: "paymentMethod",
+                    render: function (row) {
+                        return paymentMethodLabel(row.paymentMethod);
+                    }
+                }
+            ],
+            rows,
+            {
+                actions: {
+                    editAction: "edit-expense",
+                    deleteAction: "delete-expense"
+                },
+                emptyMessage: "ยังไม่มีรายการรายจ่าย"
+            }
+        );
+    }
+
+    async function renderTransfersPage() {
+        var container = getPageContainer("transfers");
+
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML =
+            createPageHeader(
+                "โอนเงินระหว่างบัญชี",
+                "จัดการการโอนเงินระหว่างบัญชีภายในกิจการ",
+                [
+                    {
+                        label: "เพิ่มรายการโอน",
+                        action: "add-transfer",
+                        className: "btn btn-primary"
+                    },
+                    {
+                        label: "ส่งออก Excel",
+                        action: "export-transfers-xlsx",
+                        className: "btn btn-secondary"
+                    }
+                ]
+            ) +
+            createSearchBar(
+                "ค้นหาเลขที่เอกสาร หรือรายละเอียด",
+                "search-transfers",
+                ""
+            ) +
+            '<div id="transfersTableContainer"></div>';
+
+        await loadAndRenderTransfers();
+    }
+
+    async function loadAndRenderTransfers(filters) {
+        var container = byId("transfersTableContainer") ||
+            findTableContainer("transfers");
+
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML =
+            '<div class="loading-state">กำลังโหลดข้อมูล...</div>';
+
+        var rows = await listEntity("Transfers", filters || {});
+
+        state.currentEntity = "Transfers";
+        state.currentData = rows;
+
+        renderTable(
+            container,
+            [
+                {
+                    label: "วันที่",
+                    key: "date",
+                    render: function (row) {
+                        return formatDate(row.date);
+                    }
+                },
+                {
+                    label: "เลขที่เอกสาร",
+                    key: "docNo"
+                },
+                {
+                    label: "จากบัญชี",
+                    key: "fromAccountId",
+                    render: function (row) {
+                        return accountName(row.fromAccountId);
+                    }
+                },
+                {
+                    label: "ไปบัญชี",
+                    key: "toAccountId",
+                    render: function (row) {
+                        return accountName(row.toAccountId);
+                    }
+                },
+                {
+                    label: "จำนวนเงิน",
+                    key: "amount",
+                    className: "text-right",
+                    render: function (row) {
+                        return formatMoney(row.amount);
+                    }
+                },
+                {
+                    label: "รายละเอียด",
+                    key: "description"
+                }
+            ],
+            rows,
+            {
+                actions: {
+                    editAction: "edit-transfer",
+                    deleteAction: "delete-transfer"
+                },
+                emptyMessage: "ยังไม่มีรายการโอนเงิน"
+            }
+        );
+    }
+
+    async function renderAccountsPage() {
+        var container = getPageContainer("accounts");
+
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML =
+            createPageHeader(
+                "เงินสด / ธนาคาร",
+                "จัดการบัญชีเงินสดและบัญชีธนาคาร",
+                [
+                    {
+                        label: "เพิ่มบัญชี",
+                        action: "add-account",
+                        className: "btn btn-primary"
+                    },
+                    {
+                        label: "ส่งออก Excel",
+                        action: "export-accounts-xlsx",
+                        className: "btn btn-secondary"
+                    }
+                ]
+            ) +
+            '<div id="accountsTableContainer"></div>';
+
+        await loadAndRenderAccounts();
+    }
+
+    async function loadAndRenderAccounts() {
+        var container = byId("accountsTableContainer") ||
+            findTableContainer("accounts");
+
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML =
+            '<div class="loading-state">กำลังโหลดข้อมูลบัญชี...</div>';
+
+        var rows = await listEntity("Accounts", {});
+
+        state.accounts = rows;
+        state.currentEntity = "Accounts";
+        state.currentData = rows;
+
+        renderTable(
+            container,
+            [
+                {
+                    label: "รหัสบัญชี",
+                    key: "code"
+                },
+                {
+                    label: "ชื่อบัญชี",
+                    key: "name"
+                },
+                {
+                    label: "ประเภท",
+                    key: "type",
+                    render: function (row) {
+                        return accountTypeLabel(row.type);
+                    }
+                },
+                {
+                    label: "ยอดยกมา",
+                    key: "openingBalance",
+                    className: "text-right",
+                    render: function (row) {
+                        return formatMoney(row.openingBalance);
+                    }
+                },
+                {
+                    label: "สถานะ",
+                    key: "active",
+                    render: function (row) {
+                        return activeLabel(row.active);
+                    }
+                }
+            ],
+            rows,
+            {
+                actions: {
+                    editAction: "edit-account",
+                    deleteAction: "delete-account"
+                },
+                emptyMessage: "ยังไม่มีบัญชี"
+            }
+        );
+    }
+
+    async function renderCustomersPage() {
+        var container = getPageContainer("customers");
+
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML =
+            createPageHeader(
+                "ลูกค้า",
+                "ทะเบียนข้อมูลลูกค้า",
+                [
+                    {
+                        label: "เพิ่มลูกค้า",
+                        action: "add-customer",
+                        className: "btn btn-primary"
+                    },
+                    {
+                        label: "ส่งออก Excel",
+                        action: "export-customers-xlsx",
+                        className: "btn btn-secondary"
+                    }
+                ]
+            ) +
+            createSearchBar(
+                "ค้นหารหัส ชื่อ เลขประจำตัวผู้เสียภาษี หรือเบอร์โทรศัพท์",
+                "search-customers",
+                ""
+            ) +
+            '<div id="customersTableContainer"></div>';
+
+        await loadAndRenderCustomers();
+    }
+
+    async function loadAndRenderCustomers(filters) {
+        var container = byId("customersTableContainer") ||
+            findTableContainer("customers");
+
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML =
+            '<div class="loading-state">กำลังโหลดข้อมูลลูกค้า...</div>';
+
+        var rows = await listEntity("Customers", filters || {});
+
+        state.customers = rows;
+        state.currentEntity = "Customers";
+        state.currentData = rows;
+
+        renderTable(
+            container,
+            [
+                {
+                    label: "รหัส",
+                    key: "code"
+                },
+                {
+                    label: "ชื่อ",
+                    key: "name"
+                },
+                {
+                    label: "เลขประจำตัวผู้เสียภาษี",
+                    key: "taxId"
+                },
+                {
+                    label: "ผู้ติดต่อ",
+                    key: "contactPerson"
+                },
+                {
+                    label: "โทรศัพท์",
+                    key: "phone"
+                },
+                {
+                    label: "สถานะ",
+                    key: "active",
+                    render: function (row) {
+                        return activeLabel(row.active);
+                    }
+                }
+            ],
+            rows,
+            {
+                actions: {
+                    editAction: "edit-customer",
+                    deleteAction: "delete-customer"
+                },
+                emptyMessage: "ยังไม่มีข้อมูลลูกค้า"
+            }
+        );
+    }
+
+    async function renderVendorsPage() {
+        var container = getPageContainer("vendors");
+
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML =
+            createPageHeader(
+                "ผู้จำหน่าย / เจ้าหนี้",
+                "ทะเบียนข้อมูลผู้จำหน่ายและเจ้าหนี้",
+                [
+                    {
+                        label: "เพิ่มผู้จำหน่าย",
+                        action: "add-vendor",
+                        className: "btn btn-primary"
+                    },
+                    {
+                        label: "ส่งออก Excel",
+                        action: "export-vendors-xlsx",
+                        className: "btn btn-secondary"
+                    }
+                ]
+            ) +
+            createSearchBar(
+                "ค้นหารหัส ชื่อ เลขประจำตัวผู้เสียภาษี หรือเบอร์โทรศัพท์",
+                "search-vendors",
+                ""
+            ) +
+            '<div id="vendorsTableContainer"></div>';
+
+        await loadAndRenderVendors();
+    }
+
+    async function loadAndRenderVendors(filters) {
+        var container = byId("vendorsTableContainer") ||
+            findTableContainer("vendors");
+
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML =
+            '<div class="loading-state">กำลังโหลดข้อมูลผู้จำหน่าย...</div>';
+
+        var rows = await listEntity("Vendors", filters || {});
+
+        state.vendors = rows;
+        state.currentEntity = "Vendors";
+        state.currentData = rows;
+
+        renderTable(
+            container,
+            [
+                {
+                    label: "รหัส",
+                    key: "code"
+                },
+                {
+                    label: "ชื่อ",
+                    key: "name"
+                },
+                {
+                    label: "เลขประจำตัวผู้เสียภาษี",
+                    key: "taxId"
+                },
+                {
+                    label: "ผู้ติดต่อ",
+                    key: "contactPerson"
+                },
+                {
+                    label: "โทรศัพท์",
+                    key: "phone"
+                },
+                {
+                    label: "สถานะ",
+                    key: "active",
+                    render: function (row) {
+                        return activeLabel(row.active);
+                    }
+                }
+            ],
+            rows,
+            {
+                actions: {
+                    editAction: "edit-vendor",
+                    deleteAction: "delete-vendor"
+                },
+                emptyMessage: "ยังไม่มีข้อมูลผู้จำหน่าย"
+            }
+        );
+    }
+
+    async function renderDocumentsPage() {
+        var container = getPageContainer("documents");
+
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML =
+            createPageHeader(
+                "ทะเบียนเอกสาร",
+                "จัดการเอกสารทางการเงินและเอกสารของกิจการ",
+                [
+                    {
+                        label: "สร้างเอกสาร",
+                        action: "add-document",
+                        className: "btn btn-primary"
+                    },
+                    {
+                        label: "ส่งออก Excel",
+                        action: "export-documents-xlsx",
+                        className: "btn btn-secondary"
+                    }
+                ]
+            ) +
+            createSearchBar(
+                "ค้นหาเลขที่เอกสาร ชื่อลูกค้า หรือรายละเอียด",
+                "search-documents",
+                ""
+            ) +
+            '<div id="documentsTableContainer"></div>';
+
+        await loadAndRenderDocuments();
+    }
+
+    async function loadAndRenderDocuments(filters) {
+        var container = byId("documentsTableContainer") ||
+            findTableContainer("documents");
+
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML =
+            '<div class="loading-state">กำลังโหลดทะเบียนเอกสาร...</div>';
+
+        var rows = await listEntity("Documents", filters || {});
+
+        state.documents = rows;
+        state.currentEntity = "Documents";
+        state.currentData = rows;
+
+        renderTable(
+            container,
+            [
+                {
+                    label: "วันที่",
+                    key: "date",
+                    render: function (row) {
+                        return formatDate(row.date);
+                    }
+                },
+                {
+                    label: "เลขที่",
+                    key: "docNo"
+                },
+                {
+                    label: "ประเภทเอกสาร",
+                    key: "docType",
+                    render: function (row) {
+                        return documentTypeLabel(row.docType);
+                    }
+                },
+                {
+                    label: "คู่ค้า",
+                    key: "partyName",
+                    render: function (row) {
+                        return safeText(
+                            row.partyName ||
+                            row.customerName ||
+                            row.vendorName,
+                            "-"
+                        );
+                    }
+                },
+                {
+                    label: "ยอดรวม",
+                    key: "total",
+                    className: "text-right",
+                    render: function (row) {
+                        return formatMoney(
                             row.total ||
                             row.grandTotal ||
                             row.amount
-                        )
-                    ) +
-                    '</td>' +
-                    '<td class="text-center">' +
-                    createDocumentActions(
-                        row
-                    ) +
-                    '</td>' +
-                    '</tr>';
-            }
-        );
-
-        html +=
-            '</tbody></table>';
-
-        return html;
-    }
-
-    function renderUsersTable(rows) {
-        let html =
-            '<table class="data-table">' +
-            '<thead>' +
-            '<tr>' +
-            '<th>ชื่อผู้ใช้</th>' +
-            '<th>ชื่อ-นามสกุล</th>' +
-            '<th>สิทธิ์</th>' +
-            '<th>สถานะ</th>' +
-            '<th>เข้าสู่ระบบล่าสุด</th>' +
-            '<th class="text-center">จัดการ</th>' +
-            '</tr>' +
-            '</thead>' +
-            '<tbody>';
-
-        rows.forEach(
-            function (row) {
-                html +=
-                    '<tr>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.username ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.fullName ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        row.role ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    renderStatus(
-                        row.active
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        formatDateTime(
-                            row.lastLoginAt
-                        )
-                    ) +
-                    '</td>' +
-                    '<td class="text-center">' +
-                    createRowActions(
-                        'users',
-                        row
-                    ) +
-                    '</td>' +
-                    '</tr>';
-            }
-        );
-
-        html +=
-            '</tbody></table>';
-
-        return html;
-    }
-
-    function renderGenericTable(rows, page) {
-        const keys =
-            getUsefulObjectKeys(
-                rows
-            );
-
-        if (!keys.length) {
-            return (
-                '<div class="empty-state">ไม่พบข้อมูล</div>'
-            );
-        }
-
-        let html =
-            '<table class="data-table">' +
-            '<thead><tr>';
-
-        keys.forEach(
-            function (key) {
-                html +=
-                    '<th>' +
-                    escapeHtml(
-                        prettifyKey(
-                            key
-                        )
-                    ) +
-                    '</th>';
-            }
-        );
-
-        html +=
-            '<th>จัดการ</th>' +
-            '</tr></thead><tbody>';
-
-        rows.forEach(
-            function (row) {
-                html +=
-                    '<tr>';
-
-                keys.forEach(
-                    function (key) {
-                        html +=
-                            '<td>' +
-                            escapeHtml(
-                                displayValue(
-                                    row[key]
-                                )
-                            ) +
-                            '</td>';
+                        );
                     }
-                );
-
-                html +=
-                    '<td>' +
-                    createRowActions(
-                        page,
-                        row
-                    ) +
-                    '</td>' +
-                    '</tr>';
-            }
-        );
-
-        html +=
-            '</tbody></table>';
-
-        return html;
-    }
-
-    function getUsefulObjectKeys(rows) {
-        const keys = [];
-        const excluded = [
-            'passwordHash',
-            'salt'
-        ];
-
-        rows.forEach(
-            function (row) {
-                if (
-                    !row ||
-                    typeof row !== 'object'
-                ) {
-                    return;
+                },
+                {
+                    label: "สถานะ",
+                    key: "status",
+                    render: function (row) {
+                        return documentStatusLabel(row.status);
+                    }
                 }
+            ],
+            rows,
+            {
+                actions: {
+                    editAction: "edit-document",
+                    deleteAction: "delete-document"
+                },
+                emptyMessage: "ยังไม่มีเอกสาร"
+            }
+        );
+    }
 
-                Object.keys(row).forEach(
-                    function (key) {
-                        if (
-                            excluded.indexOf(
-                                key
-                            ) === -1 &&
-                            keys.indexOf(
-                                key
-                            ) === -1
-                        ) {
-                            keys.push(key);
-                        }
+    async function renderUsersPage() {
+        if (!isAdmin()) {
+            showToast("คุณไม่มีสิทธิ์เข้าถึงผู้ใช้งาน", "warning");
+            return;
+        }
+
+        var container = getPageContainer("users");
+
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML =
+            createPageHeader(
+                "ผู้ใช้งานและสิทธิ์",
+                "จัดการบัญชีผู้ใช้งานและสิทธิ์การเข้าถึงระบบ",
+                [
+                    {
+                        label: "เพิ่มผู้ใช้งาน",
+                        action: "add-user",
+                        className: "btn btn-primary"
+                    },
+                    {
+                        label: "ส่งออก Excel",
+                        action: "export-users-xlsx",
+                        className: "btn btn-secondary"
                     }
-                );
+                ]
+            ) +
+            '<div id="usersTableContainer"></div>';
+
+        await loadAndRenderUsers();
+    }
+
+    async function loadAndRenderUsers() {
+        var container = byId("usersTableContainer") ||
+            findTableContainer("users");
+
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML =
+            '<div class="loading-state">กำลังโหลดข้อมูลผู้ใช้งาน...</div>';
+
+        var rows = await listEntity("Users", {});
+
+        state.users = rows;
+        state.currentEntity = "Users";
+        state.currentData = rows;
+
+        renderTable(
+            container,
+            [
+                {
+                    label: "ชื่อผู้ใช้งาน",
+                    key: "username"
+                },
+                {
+                    label: "ชื่อ-นามสกุล",
+                    key: "fullName"
+                },
+                {
+                    label: "สิทธิ์",
+                    key: "role",
+                    render: function (row) {
+                        return userRoleLabel(row.role);
+                    }
+                },
+                {
+                    label: "สถานะ",
+                    key: "active",
+                    render: function (row) {
+                        return activeLabel(row.active);
+                    }
+                },
+                {
+                    label: "เข้าสู่ระบบล่าสุด",
+                    key: "lastLoginAt",
+                    render: function (row) {
+                        return formatDateTime(row.lastLoginAt);
+                    }
+                }
+            ],
+            rows,
+            {
+                actions: {
+                    editAction: "edit-user",
+                    deleteAction: "delete-user"
+                },
+                emptyMessage: "ยังไม่มีผู้ใช้งาน"
+            }
+        );
+    }
+
+    async function renderSettingsPage() {
+        if (!isAdmin()) {
+            showToast("คุณไม่มีสิทธิ์เข้าถึงตั้งค่ากิจการ", "warning");
+            return;
+        }
+
+        var container = getPageContainer("settings");
+
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML =
+            createPageHeader(
+                "ตั้งค่ากิจการ",
+                "กำหนดค่าพื้นฐานของระบบและกิจการ",
+                [
+                    {
+                        label: "เพิ่มการตั้งค่า",
+                        action: "add-setting",
+                        className: "btn btn-primary"
+                    }
+                ]
+            ) +
+            '<div id="settingsTableContainer"></div>';
+
+        await loadAndRenderSettings();
+    }
+
+    async function loadAndRenderSettings() {
+        var container = byId("settingsTableContainer") ||
+            findTableContainer("settings");
+
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML =
+            '<div class="loading-state">กำลังโหลดการตั้งค่า...</div>';
+
+        var response = await apiRequest(
+            "settings",
+            {},
+            {
+                includeToken: true
             }
         );
 
-        return keys.slice(0, 15);
-    }
-
-    function prettifyKey(key) {
-        const map = {
-            id: 'ID',
-            date: 'วันที่',
-            docNo: 'เลขที่เอกสาร',
-            code: 'รหัส',
-            name: 'ชื่อ',
-            description: 'รายละเอียด',
-            amount: 'จำนวนเงิน',
-            active: 'สถานะ',
-            createdAt: 'สร้างเมื่อ',
-            updatedAt: 'แก้ไขเมื่อ',
-            reference: 'อ้างอิง'
-        };
-
-        return map[key] ||
-            String(key)
-                .replace(
-                    /([A-Z])/g,
-                    ' $1'
-                )
-                .replace(
-                    /^./,
-                    function (char) {
-                        return char.toUpperCase();
-                    }
-                );
-    }
-
-    function displayValue(value) {
-        if (
-            value === null ||
-            value === undefined
-        ) {
-            return '';
-        }
-
-        if (
-            typeof value === 'boolean'
-        ) {
-            return value
-                ? 'ใช้งาน'
-                : 'ไม่ใช้งาน';
-        }
-
-        if (
-            typeof value === 'object'
-        ) {
-            return JSON.stringify(
-                value
+        if (!responseSuccess(response)) {
+            throw createError(
+                extractMessage(response),
+                0,
+                "SETTINGS_FAILED",
+                response
             );
+        }
+
+        var data = normalizeResponse(response);
+
+        if (data.data !== undefined) {
+            data = parseMaybeJson(data.data);
+        }
+
+        if (data.result !== undefined) {
+            data = parseMaybeJson(data.result);
+        }
+
+        var rows = normalizeArray(data);
+
+        if (!rows.length && Array.isArray(state.settings)) {
+            rows = state.settings;
+        }
+
+        state.settings = rows;
+        state.currentEntity = "Settings";
+        state.currentData = rows;
+
+        renderTable(
+            container,
+            [
+                {
+                    label: "Key",
+                    key: "key"
+                },
+                {
+                    label: "ค่า",
+                    key: "value"
+                },
+                {
+                    label: "คำอธิบาย",
+                    key: "description"
+                },
+                {
+                    label: "แก้ไขล่าสุด",
+                    key: "updatedAt",
+                    render: function (row) {
+                        return formatDateTime(row.updatedAt);
+                    }
+                }
+            ],
+            rows,
+            {
+                actions: {
+                    editAction: "edit-setting",
+                    deleteAction: false
+                },
+                emptyMessage: "ยังไม่มีการตั้งค่า"
+            }
+        );
+    }
+
+    async function renderAuditLogsPage() {
+        if (!isAdmin()) {
+            showToast("คุณไม่มีสิทธิ์เข้าถึง Audit Log", "warning");
+            return;
+        }
+
+        var container = getPageContainer("auditlogs");
+
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML =
+            createPageHeader(
+                "Audit Log",
+                "ประวัติการทำรายการและกิจกรรมในระบบ",
+                [
+                    {
+                        label: "รีเฟรช",
+                        action: "refresh-auditlogs",
+                        className: "btn btn-secondary"
+                    },
+                    {
+                        label: "ส่งออก Excel",
+                        action: "export-auditlogs-xlsx",
+                        className: "btn btn-secondary"
+                    }
+                ]
+            ) +
+            '<div id="auditlogsTableContainer"></div>';
+
+        await loadAndRenderAuditLogs();
+    }
+
+    async function loadAndRenderAuditLogs(filters) {
+        var container = byId("auditlogsTableContainer") ||
+            findTableContainer("auditlogs");
+
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML =
+            '<div class="loading-state">กำลังโหลด Audit Log...</div>';
+
+        var response = await apiRequest(
+            "auditlogs",
+            {
+                filters: filters || {}
+            },
+            {
+                includeToken: true
+            }
+        );
+
+        if (!responseSuccess(response)) {
+            throw createError(
+                extractMessage(response),
+                0,
+                "AUDIT_LOG_FAILED",
+                response
+            );
+        }
+
+        var data = normalizeResponse(response);
+
+        if (data.data !== undefined) {
+            data = parseMaybeJson(data.data);
+        }
+
+        if (data.result !== undefined) {
+            data = parseMaybeJson(data.result);
+        }
+
+        var rows = normalizeArray(data);
+
+        state.currentEntity = "AuditLogs";
+        state.currentData = rows;
+
+        renderTable(
+            container,
+            [
+                {
+                    label: "วันเวลา",
+                    key: "createdAt",
+                    render: function (row) {
+                        return formatDateTime(
+                            row.createdAt ||
+                            row.timestamp ||
+                            row.date
+                        );
+                    }
+                },
+                {
+                    label: "ผู้ใช้งาน",
+                    key: "username"
+                },
+                {
+                    label: "Action",
+                    key: "action"
+                },
+                {
+                    label: "Entity",
+                    key: "entity"
+                },
+                {
+                    label: "รายละเอียด",
+                    key: "description",
+                    render: function (row) {
+                        return safeText(
+                            row.description ||
+                            row.details ||
+                            row.message,
+                            "-"
+                        );
+                    }
+                },
+                {
+                    label: "IP",
+                    key: "ipAddress"
+                }
+            ],
+            rows,
+            {
+                actions: {
+                    edit: false,
+                    delete: false
+                },
+                emptyMessage: "ยังไม่มี Audit Log"
+            }
+        );
+    }
+
+    async function renderReportsPage() {
+        var container = getPageContainer("reports");
+
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML =
+            createPageHeader(
+                "รายงาน",
+                "รายงานข้อมูลทางการเงิน",
+                [
+                    {
+                        label: "สร้างรายงาน",
+                        action: "run-report",
+                        className: "btn btn-primary"
+                    },
+                    {
+                        label: "ส่งออก Excel",
+                        action: "export-report-xlsx",
+                        className: "btn btn-secondary"
+                    },
+                    {
+                        label: "พิมพ์ / PDF",
+                        action: "print-report",
+                        className: "btn btn-secondary"
+                    }
+                ]
+            ) +
+            '<div class="report-filters">' +
+            '<div class="form-group">' +
+            "<label>ประเภทรายงาน</label>" +
+            '<select class="form-control" id="reportType">' +
+            '<option value="income_expense">รายรับ - รายจ่าย</option>' +
+            '<option value="account">ยอดเงินตามบัญชี</option>' +
+            '<option value="customer">รายงานลูกค้า</option>' +
+            '<option value="vendor">รายงานผู้จำหน่าย</option>' +
+            '<option value="documents">ทะเบียนเอกสาร</option>' +
+            "</select>" +
+            "</div>" +
+            '<div class="form-group">' +
+            "<label>ตั้งแต่วันที่</label>" +
+            '<input type="date" class="form-control" id="reportDateFrom" value="' +
+            escapeAttribute(getFilterDate("reportDateFrom", "start")) +
+            '">' +
+            "</div>" +
+            '<div class="form-group">' +
+            "<label>ถึงวันที่</label>" +
+            '<input type="date" class="form-control" id="reportDateTo" value="' +
+            escapeAttribute(getFilterDate("reportDateTo", "end")) +
+            '">' +
+            "</div>" +
+            "</div>" +
+            '<div id="reportResultContainer"></div>';
+    }
+
+    async function runReport() {
+        var reportTypeElement = byId("reportType");
+        var dateFromElement = byId("reportDateFrom");
+        var dateToElement = byId("reportDateTo");
+
+        var reportType = reportTypeElement ?
+            reportTypeElement.value :
+            "income_expense";
+
+        var dateFrom = dateFromElement ?
+            dateFromElement.value :
+            getFilterDate("reportDateFrom", "start");
+
+        var dateTo = dateToElement ?
+            dateToElement.value :
+            getFilterDate("reportDateTo", "end");
+
+        var container = byId("reportResultContainer");
+
+        if (container) {
+            container.innerHTML =
+                '<div class="loading-state">กำลังสร้างรายงาน...</div>';
+        }
+
+        var response = await apiRequest(
+            "report",
+            {
+                reportType: reportType,
+                dateFrom: dateFrom,
+                dateTo: dateTo
+            },
+            {
+                includeToken: true
+            }
+        );
+
+        if (!responseSuccess(response)) {
+            throw createError(
+                extractMessage(response),
+                0,
+                "REPORT_FAILED",
+                response
+            );
+        }
+
+        var data = normalizeResponse(response);
+
+        if (data.data !== undefined) {
+            data = parseMaybeJson(data.data);
+        }
+
+        if (data.result !== undefined) {
+            data = parseMaybeJson(data.result);
+        }
+
+        state.reportData = data;
+
+        renderReportResult(container, data);
+    }
+
+    function renderReportResult(container, data) {
+        if (!container) {
+            return;
+        }
+
+        var rows = normalizeArray(data);
+
+        if (!rows.length && data && Array.isArray(data.rows)) {
+            rows = data.rows;
+        }
+
+        if (!rows.length && data && Array.isArray(data.items)) {
+            rows = data.items;
+        }
+
+        if (!rows.length) {
+            container.innerHTML =
+                '<div class="empty-state">ไม่มีข้อมูลตามเงื่อนไขที่เลือก</div>';
+            return;
+        }
+
+        var keys = Object.keys(rows[0] || {});
+
+        var columns = keys.map(function (key) {
+            return {
+                label: key,
+                key: key,
+                render: function (row) {
+                    var value = row[key];
+
+                    if (
+                        key.toLowerCase().indexOf("amount") !== -1 ||
+                        key.toLowerCase().indexOf("total") !== -1 ||
+                        key.toLowerCase().indexOf("balance") !== -1
+                    ) {
+                        return formatMoney(value);
+                    }
+
+                    if (
+                        key.toLowerCase().indexOf("date") !== -1 ||
+                        key.toLowerCase().indexOf("at") !== -1
+                    ) {
+                        return formatDateTime(value);
+                    }
+
+                    return safeText(value, "");
+                }
+            };
+        });
+
+        renderTable(
+            container,
+            columns,
+            rows,
+            {
+                actions: {
+                    edit: false,
+                    delete: false
+                },
+                emptyMessage: "ไม่มีข้อมูล"
+            }
+        );
+    }
+
+    function accountName(id) {
+        if (!id) {
+            return "-";
+        }
+
+        var account = getRecordById(state.accounts, id);
+
+        if (account) {
+            return safeText(
+                account.name,
+                String(id)
+            );
+        }
+
+        for (var i = 0; i < state.accounts.length; i++) {
+            var row = state.accounts[i];
+
+            if (
+                String(row.id) === String(id) ||
+                String(row.code) === String(id)
+            ) {
+                return safeText(row.name, String(id));
+            }
+        }
+
+        return String(id);
+    }
+
+    function categoryName(id) {
+        if (!id) {
+            return "-";
+        }
+
+        for (var i = 0; i < state.categories.length; i++) {
+            var category = state.categories[i];
+
+            if (
+                String(category.id) === String(id) ||
+                String(category.code) === String(id)
+            ) {
+                return safeText(category.name, String(id));
+            }
+        }
+
+        return String(id);
+    }
+
+    function customerName(id) {
+        if (!id) {
+            return "-";
+        }
+
+        for (var i = 0; i < state.customers.length; i++) {
+            var customer = state.customers[i];
+
+            if (
+                String(customer.id) === String(id) ||
+                String(customer.code) === String(id)
+            ) {
+                return safeText(customer.name, String(id));
+            }
+        }
+
+        return String(id);
+    }
+
+    function vendorName(id) {
+        if (!id) {
+            return "-";
+        }
+
+        for (var i = 0; i < state.vendors.length; i++) {
+            var vendor = state.vendors[i];
+
+            if (
+                String(vendor.id) === String(id) ||
+                String(vendor.code) === String(id)
+            ) {
+                return safeText(vendor.name, String(id));
+            }
+        }
+
+        return String(id);
+    }
+
+    function accountTypeLabel(value) {
+        for (var i = 0; i < ACCOUNT_TYPES.length; i++) {
+            if (ACCOUNT_TYPES[i].value === String(value)) {
+                return ACCOUNT_TYPES[i].label;
+            }
+        }
+
+        return safeText(value, "-");
+    }
+
+    function paymentMethodLabel(value) {
+        for (var i = 0; i < PAYMENT_METHODS.length; i++) {
+            if (PAYMENT_METHODS[i].value === String(value)) {
+                return PAYMENT_METHODS[i].label;
+            }
+        }
+
+        return safeText(value, "-");
+    }
+
+    function userRoleLabel(value) {
+        for (var i = 0; i < USER_ROLES.length; i++) {
+            if (USER_ROLES[i].value === String(value)) {
+                return USER_ROLES[i].label;
+            }
+        }
+
+        return safeText(value, "-");
+    }
+
+    function documentTypeLabel(value) {
+        for (var i = 0; i < DOCUMENT_TYPES.length; i++) {
+            if (DOCUMENT_TYPES[i].value === String(value)) {
+                return DOCUMENT_TYPES[i].label;
+            }
+        }
+
+        return safeText(value, "-");
+    }
+
+    function documentStatusLabel(value) {
+        var status = String(value || "").toLowerCase();
+
+        if (status === "cancelled" || status === "canceled") {
+            return "ยกเลิก";
+        }
+
+        if (status === "paid") {
+            return "ชำระแล้ว";
+        }
+
+        if (status === "pending") {
+            return "รอดำเนินการ";
+        }
+
+        if (status === "draft") {
+            return "ร่าง";
+        }
+
+        if (status === "issued") {
+            return "ออกแล้ว";
+        }
+
+        if (!status) {
+            return "-";
         }
 
         return String(value);
     }
 
-    function renderStatus(value) {
-        const active =
+    function activeLabel(value) {
+        if (
             value === true ||
-            value === 'true' ||
             value === 1 ||
-            value === '1' ||
-            value === 'ใช้งาน' ||
-            value === 'active';
-
-        return active
-            ? '<span class="badge badge-success">ใช้งาน</span>'
-            : '<span class="badge badge-secondary">ไม่ใช้งาน</span>';
-    }
-
-    function renderDocumentStatus(value) {
-        const status =
-            String(
-                value ||
-                'active'
-            ).toLowerCase();
-
-        if (
-            status === 'cancelled' ||
-            status === 'canceled' ||
-            status === 'ยกเลิก'
+            String(value).toLowerCase() === "true" ||
+            String(value) === "1" ||
+            String(value).toLowerCase() === "active"
         ) {
-            return (
-                '<span class="badge badge-danger">ยกเลิก</span>'
-            );
+            return "ใช้งาน";
         }
 
-        if (
-            status === 'paid' ||
-            status === 'ชำระแล้ว'
-        ) {
-            return (
-                '<span class="badge badge-success">ชำระแล้ว</span>'
-            );
-        }
-
-        if (
-            status === 'pending' ||
-            status === 'รอดำเนินการ'
-        ) {
-            return (
-                '<span class="badge badge-warning">รอดำเนินการ</span>'
-            );
-        }
-
-        return (
-            '<span class="badge badge-info">ใช้งาน</span>'
-        );
+        return "ปิดใช้งาน";
     }
 
-    function createRowActions(entity, row) {
-        const id =
-            row.id ||
-            row.ID ||
-            row._id ||
-            '';
-
-        const encodedId =
-            escapeHtml(
-                String(id)
-            );
-
-        return (
-            '<div class="row-actions">' +
-            '<button type="button" class="btn-icon" title="แก้ไข" data-action="edit" data-entity="' +
-            escapeHtml(entity) +
-            '" data-id="' +
-            encodedId +
-            '">✎</button>' +
-            '<button type="button" class="btn-icon danger" title="ลบ" data-action="delete" data-entity="' +
-            escapeHtml(entity) +
-            '" data-id="' +
-            encodedId +
-            '">×</button>' +
-            '</div>'
-        );
-    }
-
-    function createDocumentActions(row) {
-        const id =
-            row.id ||
-            row.ID ||
-            '';
-
-        const encodedId =
-            escapeHtml(
-                String(id)
-            );
-
-        return (
-            '<div class="row-actions">' +
-            '<button type="button" class="btn-icon" title="ดู" data-action="view-document" data-id="' +
-            encodedId +
-            '">ดู</button>' +
-            '<button type="button" class="btn-icon" title="แก้ไข" data-action="edit" data-entity="documents" data-id="' +
-            encodedId +
-            '">✎</button>' +
-            '<button type="button" class="btn-icon" title="PDF" data-action="pdf-document" data-id="' +
-            encodedId +
-            '">PDF</button>' +
-            '<button type="button" class="btn-icon danger" title="ยกเลิก" data-action="cancel-document" data-id="' +
-            encodedId +
-            '">ยกเลิก</button>' +
-            '</div>'
-        );
-    }
-
-    function getAccountName(idOrValue) {
-        if (!idOrValue) {
-            return '-';
+    function getFieldValue(form, name) {
+        if (!form) {
+            return "";
         }
 
-        const value =
-            String(idOrValue);
+        var element = form.elements[name];
 
-        const account =
-            state.accounts.find(
-                function (item) {
-                    return (
-                        String(
-                            item.id ||
-                            ''
-                        ) === value ||
-                        String(
-                            item.code ||
-                            ''
-                        ) === value ||
-                        String(
-                            item.name ||
-                            ''
-                        ) === value
-                    );
-                }
-            );
-
-        if (account) {
-            return (
-                account.code
-                    ? account.code +
-                      ' - '
-                    : ''
-            ) +
-            (
-                account.name ||
-                value
+        if (!element) {
+            element = form.querySelector(
+                '[name="' + escapeAttribute(name) + '"]'
             );
         }
 
-        return value;
-    }
-
-    function getCategoryName(idOrValue) {
-        if (!idOrValue) {
-            return '-';
+        if (!element) {
+            return "";
         }
 
-        const value =
-            String(idOrValue);
-
-        const category =
-            state.categories.find(
-                function (item) {
-                    return (
-                        String(
-                            item.id ||
-                            ''
-                        ) === value ||
-                        String(
-                            item.code ||
-                            ''
-                        ) === value ||
-                        String(
-                            item.name ||
-                            ''
-                        ) === value
-                    );
-                }
-            );
-
-        if (category) {
-            return (
-                category.code
-                    ? category.code +
-                      ' - '
-                    : ''
-            ) +
-            (
-                category.name ||
-                value
-            );
+        if (element.type === "checkbox") {
+            return element.checked;
         }
 
-        return value;
+        return element.value;
     }
 
-    function getDocumentTypeName(codeOrName) {
-        if (!codeOrName) {
-            return '-';
-        }
-
-        const value =
-            String(codeOrName);
-
-        const type =
-            (
-                state.documentTypes.length
-                    ? state.documentTypes
-                    : DOCUMENT_TYPES
-            ).find(
-                function (item) {
-                    return (
-                        String(
-                            item.code ||
-                            ''
-                        ) === value ||
-                        String(
-                            item.id ||
-                            ''
-                        ) === value ||
-                        String(
-                            item.name ||
-                            ''
-                        ) === value
-                    );
-                }
-            );
-
-        return type
-            ? (
-                type.name ||
-                type.label ||
-                value
-            )
-            : value;
-    }
-
-    function renderPagination(page, current, total) {
-        const container =
-            byId(
-                'entityPagination'
-            );
-
-        if (!container) {
+    function setFieldValue(form, name, value) {
+        if (!form) {
             return;
         }
 
-        const totalPages =
-            Math.max(
-                1,
-                Math.ceil(
-                    total /
-                    state.pageSize
-                )
+        var element = form.elements[name];
+
+        if (!element) {
+            element = form.querySelector(
+                '[name="' + escapeAttribute(name) + '"]'
             );
+        }
 
-        if (
-            totalPages <= 1
-        ) {
-            container.innerHTML =
-                '<div class="pagination-info">' +
-                'ทั้งหมด ' +
-                formatNumber(total) +
-                ' รายการ' +
-                '</div>';
-
+        if (!element) {
             return;
         }
 
-        let html =
-            '<div class="pagination">' +
-            '<button type="button" class="pagination-btn" data-action="page" data-entity="' +
-            escapeHtml(page) +
-            '" data-page-number="' +
-            Math.max(
-                1,
-                current - 1
-            ) +
-            '"' +
-            (
-                current <= 1
-                    ? ' disabled'
-                    : ''
-            ) +
-            '>‹</button>';
+        if (element.type === "checkbox") {
+            element.checked =
+                value === true ||
+                value === 1 ||
+                String(value).toLowerCase() === "true" ||
+                String(value) === "1";
+            return;
+        }
 
-        const start =
-            Math.max(
-                1,
-                current - 2
-            );
+        element.value = value === null || value === undefined ?
+            "" :
+            String(value);
+    }
 
-        const end =
-            Math.min(
-                totalPages,
-                current + 2
-            );
+    function createSelectOptions(options, selectedValue, placeholder) {
+        var html = "";
 
-        for (
-            let index = start;
-            index <= end;
-            index += 1
-        ) {
+        if (placeholder !== undefined) {
             html +=
-                '<button type="button" class="pagination-btn ' +
-                (
-                    index === current
-                        ? 'active'
-                        : ''
-                ) +
-                '" data-action="page" data-entity="' +
-                escapeHtml(page) +
-                '" data-page-number="' +
-                index +
-                '">' +
-                index +
-                '</button>';
+                '<option value="">' +
+                escapeHtml(placeholder) +
+                "</option>";
         }
 
-        html +=
-            '<button type="button" class="pagination-btn" data-action="page" data-entity="' +
-            escapeHtml(page) +
-            '" data-page-number="' +
-            Math.min(
-                totalPages,
-                current + 1
-            ) +
-            '"' +
-            (
-                current >= totalPages
-                    ? ' disabled'
-                    : ''
-            ) +
-            '>›</button>' +
-            '<span class="pagination-info">ทั้งหมด ' +
-            formatNumber(total) +
-            ' รายการ</span>' +
-            '</div>';
-
-        container.innerHTML =
-            html;
-    }
-
-    async function applyFilter(page) {
-        const filters = {
-            dateFrom:
-                byId('filterDateFrom')
-                    ? byId('filterDateFrom').value
-                    : '',
-            dateTo:
-                byId('filterDateTo')
-                    ? byId('filterDateTo').value
-                    : '',
-            search:
-                byId('filterSearch')
-                    ? byId('filterSearch').value.trim()
-                    : '',
-            documentType:
-                byId('filterDocumentType')
-                    ? byId('filterDocumentType').value
-                    : ''
-        };
-
-        state.filters[page] =
-            filters;
-
-        await loadEntityRows(
-            page,
-            1
-        );
-    }
-
-    async function clearFilter(page) {
-        state.filters[page] =
-            {};
-
-        applyEntityFiltersToForm(
-            page,
-            {}
-        );
-
-        await loadEntityRows(
-            page,
-            1
-        );
-    }
-
-    function findCurrentRow(entity, id) {
-        const rows =
-            state.currentRows || [];
-
-        return rows.find(
-            function (row) {
-                return (
-                    String(
-                        row.id ||
-                        row.ID ||
-                        row._id ||
-                        ''
-                    ) ===
-                    String(id)
-                );
-            }
-        );
-    }
-
-    async function openCreateModal(entity) {
-        state.editingId = '';
-
-        if (entity === 'income') {
-            openIncomeModal();
-            return;
-        }
-
-        if (entity === 'expense') {
-            openExpenseModal();
-            return;
-        }
-
-        if (entity === 'transfers') {
-            openTransferModal();
-            return;
-        }
-
-        if (entity === 'accounts') {
-            openAccountModal();
-            return;
-        }
-
-        if (entity === 'categories') {
-            openCategoryModal();
-            return;
-        }
-
-        if (entity === 'customers') {
-            openPartyModal(
-                'customers'
-            );
-            return;
-        }
-
-        if (entity === 'vendors') {
-            openPartyModal(
-                'vendors'
-            );
-            return;
-        }
-
-        if (entity === 'documents') {
-            openDocumentModal();
-            return;
-        }
-
-        if (entity === 'users') {
-            if (!isAdmin()) {
-                showToast(
-                    'เฉพาะผู้ดูแลระบบเท่านั้นที่สามารถจัดการผู้ใช้งานได้',
-                    'warning'
-                );
-
-                return;
-            }
-
-            openUserModal();
-            return;
-        }
-    }
-
-    async function openEditModal(entity, id) {
-        const row =
-            findCurrentRow(
-                entity,
-                id
-            );
-
-        if (!row) {
-            try {
-                const response =
-                    await apiRequest(
-                        'get',
-                        {
-                            entity: entity,
-                            id: id
-                        }
-                    );
-
-                const data =
-                    unwrapResponse(
-                        response
-                    );
-
-                state.editingId = id;
-
-                if (entity === 'income') {
-                    openIncomeModal(
-                        data
-                    );
-                } else if (entity === 'expense') {
-                    openExpenseModal(
-                        data
-                    );
-                } else if (entity === 'transfers') {
-                    openTransferModal(
-                        data
-                    );
-                } else if (entity === 'accounts') {
-                    openAccountModal(
-                        data
-                    );
-                } else if (entity === 'categories') {
-                    openCategoryModal(
-                        data
-                    );
-                } else if (
-                    entity === 'customers' ||
-                    entity === 'vendors'
-                ) {
-                    openPartyModal(
-                        entity,
-                        data
-                    );
-                } else if (entity === 'documents') {
-                    openDocumentModal(
-                        data
-                    );
-                } else if (entity === 'users') {
-                    openUserModal(
-                        data
-                    );
-                }
-
-                return;
-            } catch (error) {
-                showToast(
-                    error.message ||
-                    'ไม่สามารถโหลดข้อมูลได้',
-                    'error'
-                );
-
-                return;
-            }
-        }
-
-        state.editingId =
-            id;
-
-        if (entity === 'income') {
-            openIncomeModal(
-                row
-            );
-            return;
-        }
-
-        if (entity === 'expense') {
-            openExpenseModal(
-                row
-            );
-            return;
-        }
-
-        if (entity === 'transfers') {
-            openTransferModal(
-                row
-            );
-            return;
-        }
-
-        if (entity === 'accounts') {
-            openAccountModal(
-                row
-            );
-            return;
-        }
-
-        if (entity === 'categories') {
-            openCategoryModal(
-                row
-            );
-            return;
-        }
-
-        if (
-            entity === 'customers' ||
-            entity === 'vendors'
-        ) {
-            openPartyModal(
-                entity,
-                row
-            );
-            return;
-        }
-
-        if (entity === 'documents') {
-            openDocumentModal(
-                row
-            );
-            return;
-        }
-
-        if (entity === 'users') {
-            openUserModal(
-                row
-            );
-        }
-    }
-
-    async function deleteEntity(entity, id) {
-        const confirmed =
-            await confirmAction(
-                'ยืนยันการลบรายการนี้หรือไม่?\nการลบข้อมูลอาจไม่สามารถย้อนกลับได้'
-            );
-
-        if (!confirmed) {
-            return;
-        }
-
-        const config =
-            ENTITY_CONFIG[entity];
-
-        if (!config) {
-            return;
-        }
-
-        try {
-            setLoading(
-                true,
-                'กำลังลบข้อมูล...'
-            );
-
-            await apiRequest(
-                config.deleteAction ||
-                'delete',
-                {
-                    entity: entity,
-                    sheet: config.sheet,
-                    id: id
-                }
-            );
-
-            showToast(
-                'ลบข้อมูลสำเร็จ',
-                'success'
-            );
-
-            await loadEntityRows(
-                entity,
-                state.currentPageNumber
-            );
-        } catch (error) {
-            console.error(
-                'DELETE ERROR:',
-                error
-            );
-
-            showToast(
-                error.message ||
-                'ไม่สามารถลบข้อมูลได้',
-                'error'
-            );
-        } finally {
-            setLoading(false);
-        }
-    }
-
-    function openModal(options) {
-        const settings =
-            options || {};
-
-        let container =
-            byId('modalContainer');
-
-        if (!container) {
-            container =
-                document.createElement(
-                    'div'
-                );
-
-            container.id =
-                'modalContainer';
-
-            container.className =
-                'modal-container';
-
-            document.body.appendChild(
-                container
-            );
-        }
-
-        const fields =
-            settings.fields || [];
-
-        let fieldsHtml = '';
-
-        fields.forEach(
-            function (field) {
-                fieldsHtml +=
-                    createFormField(
-                        field
-                    );
-            }
-        );
-
-        container.innerHTML =
-            '<div class="modal-backdrop" data-modal-close></div>' +
-            '<div class="modal-dialog ' +
-            escapeHtml(
-                settings.size ||
-                ''
-            ) +
-            '">' +
-            '<div class="modal-header">' +
-            '<div>' +
-            '<h2>' +
-            escapeHtml(
-                settings.title ||
-                ''
-            ) +
-            '</h2>' +
-            (
-                settings.subtitle
-                    ? '<p>' +
-                      escapeHtml(
-                          settings.subtitle
-                      ) +
-                      '</p>'
-                    : ''
-            ) +
-            '</div>' +
-            '<button type="button" class="modal-close" data-modal-close>×</button>' +
-            '</div>' +
-            '<form id="dynamicModalForm" class="modal-form">' +
-            '<div class="modal-body">' +
-            fieldsHtml +
-            '</div>' +
-            '<div class="modal-footer">' +
-            '<button type="button" class="btn btn-secondary" data-modal-close>ยกเลิก</button>' +
-            '<button type="submit" class="btn btn-primary" id="modalSubmitButton">' +
-            escapeHtml(
-                settings.submitLabel ||
-                'บันทึก'
-            ) +
-            '</button>' +
-            '</div>' +
-            '</form>' +
-            '</div>';
-
-        showElement(
-            container
-        );
-
-        container.classList.add(
-            'open'
-        );
-
-        state.currentModal =
-            container;
-
-        const form =
-            byId(
-                'dynamicModalForm'
-            );
-
-        if (form) {
-            form.addEventListener(
-                'submit',
-                async function (event) {
-                    event.preventDefault();
-                    event.stopPropagation();
-
-                    const values =
-                        collectFormValues(
-                            form,
-                            fields
-                        );
-
-                    try {
-                        setModalLoading(
-                            true
-                        );
-
-                        await settings.onSubmit(
-                            values
-                        );
-
-                        closeModal();
-                    } catch (error) {
-                        console.error(
-                            'MODAL SUBMIT ERROR:',
-                            error
-                        );
-
-                        showToast(
-                            error.message ||
-                            'ไม่สามารถบันทึกข้อมูลได้',
-                            'error',
-                            6000
-                        );
-                    } finally {
-                        setModalLoading(
-                            false
-                        );
-                    }
-
-                    return false;
-                }
-            );
-        }
-
-        container.addEventListener(
-            'click',
-            function (event) {
-                const target =
-                    event.target;
-
-                if (
-                    target &&
-                    target.closest(
-                        '[data-modal-close]'
-                    )
-                ) {
-                    closeModal();
-                }
-            }
-        );
-
-        if (
-            typeof settings.afterOpen ===
-            'function'
-        ) {
-            settings.afterOpen(
-                container
-            );
-        }
-    }
-
-    function closeModal() {
-        const container =
-            byId('modalContainer');
-
-        if (!container) {
-            return;
-        }
-
-        container.classList.remove(
-            'open'
-        );
-
-        hideElement(
-            container
-        );
-
-        container.innerHTML =
-            '';
-
-        state.currentModal =
-            null;
-    }
-
-    function setModalLoading(loading) {
-        const button =
-            byId(
-                'modalSubmitButton'
-            );
-
-        if (button) {
-            button.disabled =
-                loading;
-
-            button.textContent =
-                loading
-                    ? 'กำลังบันทึก...'
-                    : 'บันทึก';
-        }
-    }
-
-    function createFormField(field) {
-        const type =
-            field.type ||
-            'text';
-
-        const name =
-            field.name ||
-            '';
-
-        const label =
-            field.label ||
-            name;
-
-        const required =
-            field.required
-                ? ' required'
-                : '';
-
-        const wrapperClass =
-            field.className ||
-            'form-group';
-
-        const value =
-            field.value !== undefined &&
-            field.value !== null
-                ? field.value
-                : '';
-
-        let input = '';
-
-        if (type === 'textarea') {
-            input =
-                '<textarea id="field-' +
-                escapeHtml(name) +
-                '" name="' +
-                escapeHtml(name) +
-                '" rows="' +
-                escapeHtml(
-                    field.rows ||
-                    '3'
-                ) +
+        options.forEach(function (option) {
+            var selected =
+                String(option.value) === String(selectedValue) ?
+                " selected" :
+                "";
+
+            html +=
+                '<option value="' +
+                escapeAttribute(option.value) +
                 '"' +
-                required +
-                '>' +
-                escapeHtml(
-                    value
-                ) +
-                '</textarea>';
-        } else if (
-            type === 'select'
-        ) {
-            input =
-                '<select id="field-' +
-                escapeHtml(name) +
-                '" name="' +
-                escapeHtml(name) +
-                '"' +
-                required +
-                '>' +
-                (
-                    field.optionsHtml ||
-                    createSelectOptions(
-                        field.options ||
-                        [],
-                        value
-                    )
-                ) +
-                '</select>';
-        } else if (
-            type === 'checkbox'
-        ) {
-            input =
-                '<label class="checkbox-label">' +
-                '<input type="checkbox" id="field-' +
-                escapeHtml(name) +
-                '" name="' +
-                escapeHtml(name) +
-                '"' +
-                (
-                    value === true ||
-                    value === 'true' ||
-                    value === 1 ||
-                    value === '1'
-                        ? ' checked'
-                        : ''
-                ) +
-                '>' +
-                '<span>' +
-                escapeHtml(
-                    field.checkboxLabel ||
-                    label
-                ) +
-                '</span>' +
-                '</label>';
-        } else {
-            input =
-                '<input type="' +
-                escapeHtml(type) +
-                '" id="field-' +
-                escapeHtml(name) +
-                '" name="' +
-                escapeHtml(name) +
-                '" value="' +
-                escapeHtml(
-                    value
-                ) +
-                '"' +
-                required +
-                (
-                    field.placeholder
-                        ? ' placeholder="' +
-                          escapeHtml(
-                              field.placeholder
-                          ) +
-                          '"'
-                        : ''
-                ) +
-                (
-                    field.step
-                        ? ' step="' +
-                          escapeHtml(
-                              field.step
-                          ) +
-                          '"'
-                        : ''
-                ) +
-                (
-                    field.min !== undefined
-                        ? ' min="' +
-                          escapeHtml(
-                              field.min
-                          ) +
-                          '"'
-                        : ''
-                ) +
-                (
-                    field.readonly
-                        ? ' readonly'
-                        : ''
-                ) +
-                '>';
-        }
-
-        if (type === 'checkbox') {
-            return (
-                '<div class="' +
-                escapeHtml(
-                    wrapperClass
-                ) +
-                ' checkbox-group">' +
-                input +
-                '</div>'
-            );
-        }
-
-        return (
-            '<div class="' +
-            escapeHtml(
-                wrapperClass
-            ) +
-            '">' +
-            '<label for="field-' +
-            escapeHtml(name) +
-            '">' +
-            escapeHtml(label) +
-            (
-                field.required
-                    ? ' <span class="required">*</span>'
-                    : ''
-            ) +
-            '</label>' +
-            input +
-            (
-                field.help
-                    ? '<small class="form-help">' +
-                      escapeHtml(
-                          field.help
-                      ) +
-                      '</small>'
-                    : ''
-            ) +
-            '</div>'
-        );
-    }
-
-    function createSelectOptions(options, selected) {
-        let html =
-            '<option value="">-- เลือก --</option>';
-
-        options.forEach(
-            function (option) {
-                const value =
-                    option.value !== undefined
-                        ? option.value
-                        : option.id;
-
-                const label =
-                    option.label !== undefined
-                        ? option.label
-                        : option.name;
-
-                html +=
-                    '<option value="' +
-                    escapeHtml(
-                        value
-                    ) +
-                    '"' +
-                    (
-                        String(
-                            value
-                        ) ===
-                        String(
-                            selected
-                        )
-                            ? ' selected'
-                            : ''
-                    ) +
-                    '>' +
-                    escapeHtml(
-                        label
-                    ) +
-                    '</option>';
-            }
-        );
+                selected +
+                ">" +
+                escapeHtml(option.label) +
+                "</option>";
+        });
 
         return html;
     }
 
-    function collectFormValues(form, fields) {
-        const values = {};
-
-        fields.forEach(
-            function (field) {
-                const name =
-                    field.name;
-
-                const element =
-                    form.querySelector(
-                        '[name="' +
-                        CSS.escape(
-                            name
-                        ) +
-                        '"]'
-                    );
-
-                if (!element) {
-                    values[name] =
-                        field.value !== undefined
-                            ? field.value
-                            : '';
-
-                    return;
-                }
-
-                if (
-                    field.type ===
-                    'checkbox'
-                ) {
-                    values[name] =
-                        element.checked;
-                } else if (
-                    field.type ===
-                    'number'
-                ) {
-                    values[name] =
-                        parseNumber(
-                            element.value
-                        );
-                } else {
-                    values[name] =
-                        element.value;
-                }
-            }
-        );
-
-        return values;
-    }
-
     function accountOptions(selected) {
-        return state.accounts.map(
-            function (account) {
-                return {
-                    value:
-                        account.id ||
-                        account.code ||
-                        '',
-                    label:
-                        (
-                            account.code
-                                ? account.code +
-                                  ' - '
-                                : ''
-                        ) +
-                        (
-                            account.name ||
-                            ''
-                        )
-                };
+        return state.accounts.map(function (account) {
+            return {
+                value: account.id || account.code,
+                label:
+                    safeText(account.code, "") +
+                    (
+                        account.code && account.name ?
+                        " - " :
+                        ""
+                    ) +
+                    safeText(account.name, "")
+            };
+        });
+    }
+
+    function categoryOptions(selected, type) {
+        var options = [];
+
+        state.categories.forEach(function (category) {
+            var categoryType = String(category.type || "").toLowerCase();
+
+            if (
+                type &&
+                categoryType &&
+                categoryType !== String(type).toLowerCase()
+            ) {
+                return;
             }
+
+            options.push({
+                value: category.id || category.code,
+                label:
+                    safeText(category.code, "") +
+                    (
+                        category.code && category.name ?
+                        " - " :
+                        ""
+                    ) +
+                    safeText(category.name, "")
+            });
+        });
+
+        return options;
+    }
+
+    function customerOptions() {
+        return state.customers.map(function (customer) {
+            return {
+                value: customer.id || customer.code,
+                label:
+                    safeText(customer.code, "") +
+                    (
+                        customer.code && customer.name ?
+                        " - " :
+                        ""
+                    ) +
+                    safeText(customer.name, "")
+            };
+        });
+    }
+
+    function vendorOptions() {
+        return state.vendors.map(function (vendor) {
+            return {
+                value: vendor.id || vendor.code,
+                label:
+                    safeText(vendor.code, "") +
+                    (
+                        vendor.code && vendor.name ?
+                        " - " :
+                        ""
+                    ) +
+                    safeText(vendor.name, "")
+            };
+        });
+    }
+
+    function createFormField(field, value) {
+        var type = field.type || "text";
+        var name = field.name || "";
+        var label = field.label || name;
+        var required = field.required ? " required" : "";
+        var disabled = field.disabled ? " disabled" : "";
+        var placeholder = field.placeholder || "";
+        var inputValue = value === undefined || value === null ?
+            "" :
+            value;
+
+        if (type === "select") {
+            return (
+                '<div class="form-group">' +
+                "<label>" +
+                escapeHtml(label) +
+                (field.required ? " *" : "") +
+                "</label>" +
+                '<select class="form-control" name="' +
+                escapeAttribute(name) +
+                '"' +
+                required +
+                disabled +
+                ">" +
+                createSelectOptions(
+                    field.options || [],
+                    inputValue,
+                    field.placeholderOption
+                ) +
+                "</select>" +
+                "</div>"
+            );
+        }
+
+        if (type === "textarea") {
+            return (
+                '<div class="form-group">' +
+                "<label>" +
+                escapeHtml(label) +
+                (field.required ? " *" : "") +
+                "</label>" +
+                '<textarea class="form-control" name="' +
+                escapeAttribute(name) +
+                '" placeholder="' +
+                escapeAttribute(placeholder) +
+                '"' +
+                required +
+                disabled +
+                ">" +
+                escapeHtml(inputValue) +
+                "</textarea>" +
+                "</div>"
+            );
+        }
+
+        if (type === "checkbox") {
+            var checked =
+                inputValue === true ||
+                inputValue === 1 ||
+                String(inputValue).toLowerCase() === "true" ||
+                String(inputValue) === "1";
+
+            return (
+                '<div class="form-group form-group-checkbox">' +
+                '<label class="checkbox-label">' +
+                '<input type="checkbox" name="' +
+                escapeAttribute(name) +
+                '"' +
+                (checked ? " checked" : "") +
+                disabled +
+                ">" +
+                "<span>" +
+                escapeHtml(label) +
+                "</span>" +
+                "</label>" +
+                "</div>"
+            );
+        }
+
+        return (
+            '<div class="form-group">' +
+            "<label>" +
+            escapeHtml(label) +
+            (field.required ? " *" : "") +
+            "</label>" +
+            '<input type="' +
+            escapeAttribute(type) +
+            '" class="form-control" name="' +
+            escapeAttribute(name) +
+            '" value="' +
+            escapeAttribute(inputValue) +
+            '" placeholder="' +
+            escapeAttribute(placeholder) +
+            '"' +
+            required +
+            disabled +
+            ">" +
+            "</div>"
         );
     }
 
-    function categoryOptions(type, selected) {
-        const filtered =
-            state.categories.filter(
-                function (category) {
-                    if (!type) {
-                        return true;
-                    }
+    function ensureModal() {
+        var modal = byId("modalContainer");
 
-                    return (
-                        !category.type ||
-                        String(
-                            category.type
-                        ).toLowerCase() ===
-                        String(
-                            type
-                        ).toLowerCase()
-                    );
-                }
+        if (!modal) {
+            modal = document.createElement("div");
+            modal.id = "modalContainer";
+            modal.className = "modal-container hidden";
+            document.body.appendChild(modal);
+        }
+
+        return modal;
+    }
+
+    function openModal(config) {
+        var modal = ensureModal();
+
+        var title = config.title || "รายการ";
+        var fields = config.fields || [];
+        var values = config.values || {};
+        var submitLabel = config.submitLabel || "บันทึก";
+
+        var html =
+            '<div class="modal-backdrop" data-modal-close></div>' +
+            '<div class="modal-dialog">' +
+            '<div class="modal-header">' +
+            "<h3>" +
+            escapeHtml(title) +
+            "</h3>" +
+            '<button type="button" class="modal-close" data-modal-close aria-label="ปิด">×</button>' +
+            "</div>" +
+            '<form class="modal-form" id="dynamicModalForm">' +
+            '<div class="modal-body">';
+
+        fields.forEach(function (field) {
+            html += createFormField(
+                field,
+                values[field.name]
             );
-
-        return filtered.map(
-            function (category) {
-                return {
-                    value:
-                        category.id ||
-                        category.code ||
-                        '',
-                    label:
-                        (
-                            category.code
-                                ? category.code +
-                                  ' - '
-                                : ''
-                        ) +
-                        (
-                            category.name ||
-                            ''
-                        )
-                };
-            }
-        );
-    }
-
-    function openIncomeModal(data) {
-        const row =
-            data || {};
-
-        const fields = [
-            {
-                name: 'date',
-                label: 'วันที่',
-                type: 'date',
-                value:
-                    toInputDate(
-                        row.date
-                    ),
-                required: true
-            },
-            {
-                name: 'docNo',
-                label: 'เลขที่เอกสาร',
-                type: 'text',
-                value:
-                    row.docNo ||
-                    row.documentNo ||
-                    '',
-                placeholder:
-                    'เว้นว่างได้หากต้องการให้ระบบจัดเลขที่'
-            },
-            {
-                name: 'accountId',
-                label: 'บัญชีรับเงิน',
-                type: 'select',
-                value:
-                    row.accountId ||
-                    row.account ||
-                    '',
-                options:
-                    accountOptions(
-                        row.accountId
-                    ),
-                required: true
-            },
-            {
-                name: 'categoryId',
-                label: 'หมวดหมู่รายรับ',
-                type: 'select',
-                value:
-                    row.categoryId ||
-                    row.category ||
-                    '',
-                options:
-                    categoryOptions(
-                        'income',
-                        row.categoryId
-                    )
-            },
-            {
-                name: 'counterpartyName',
-                label: 'ผู้จ่าย / ลูกค้า',
-                type: 'text',
-                value:
-                    row.counterpartyName ||
-                    row.customerName ||
-                    ''
-            },
-            {
-                name: 'description',
-                label: 'รายละเอียด',
-                type: 'text',
-                value:
-                    row.description ||
-                    '',
-                required: true
-            },
-            {
-                name: 'amount',
-                label: 'จำนวนเงิน',
-                type: 'number',
-                value:
-                    row.amount ||
-                    '',
-                min: '0',
-                step: '0.01',
-                required: true
-            },
-            {
-                name: 'paymentMethod',
-                label: 'ช่องทางรับเงิน',
-                type: 'select',
-                value:
-                    row.paymentMethod ||
-                    '',
-                options: [
-                    {
-                        value: 'เงินสด',
-                        label: 'เงินสด'
-                    },
-                    {
-                        value: 'โอนเงิน',
-                        label: 'โอนเงิน'
-                    },
-                    {
-                        value: 'บัตร',
-                        label: 'บัตร'
-                    },
-                    {
-                        value: 'เช็ค',
-                        label: 'เช็ค'
-                    },
-                    {
-                        value: 'อื่น ๆ',
-                        label: 'อื่น ๆ'
-                    }
-                ]
-            },
-            {
-                name: 'reference',
-                label: 'เลขอ้างอิง',
-                type: 'text',
-                value:
-                    row.reference ||
-                    ''
-            }
-        ];
-
-        openModal({
-            title:
-                state.editingId
-                    ? 'แก้ไขรายรับ'
-                    : 'เพิ่มรายรับ',
-            subtitle:
-                'กรอกข้อมูลรายการรายรับ',
-            fields: fields,
-            submitLabel:
-                'บันทึกรายรับ',
-            onSubmit:
-                async function (
-                    values
-                ) {
-                    values.id =
-                        state.editingId ||
-                        row.id ||
-                        '';
-
-                    await apiRequest(
-                        'saveincome',
-                        {
-                            data: values
-                        }
-                    );
-
-                    showToast(
-                        'บันทึกรายรับสำเร็จ',
-                        'success'
-                    );
-
-                    await loadEntityRows(
-                        'income',
-                        state.currentPageNumber
-                    );
-                }
         });
-    }
 
-    function openExpenseModal(data) {
-        const row =
-            data || {};
+        html +=
+            "</div>" +
+            '<div class="modal-footer">' +
+            '<button type="button" class="btn btn-secondary" data-modal-close>ยกเลิก</button>' +
+            '<button type="submit" class="btn btn-primary">' +
+            escapeHtml(submitLabel) +
+            "</button>" +
+            "</div>" +
+            "</form>" +
+            "</div>";
 
-        const fields = [
-            {
-                name: 'date',
-                label: 'วันที่',
-                type: 'date',
-                value:
-                    toInputDate(
-                        row.date
-                    ),
-                required: true
-            },
-            {
-                name: 'docNo',
-                label: 'เลขที่เอกสาร',
-                type: 'text',
-                value:
-                    row.docNo ||
-                    row.documentNo ||
-                    '',
-                placeholder:
-                    'เว้นว่างได้หากต้องการให้ระบบจัดเลขที่'
-            },
-            {
-                name: 'accountId',
-                label: 'บัญชีจ่ายเงิน',
-                type: 'select',
-                value:
-                    row.accountId ||
-                    row.account ||
-                    '',
-                options:
-                    accountOptions(
-                        row.accountId
-                    ),
-                required: true
-            },
-            {
-                name: 'categoryId',
-                label: 'หมวดหมู่รายจ่าย',
-                type: 'select',
-                value:
-                    row.categoryId ||
-                    row.category ||
-                    '',
-                options:
-                    categoryOptions(
-                        'expense',
-                        row.categoryId
-                    )
-            },
-            {
-                name: 'counterpartyName',
-                label: 'ผู้รับเงิน / ผู้จำหน่าย',
-                type: 'text',
-                value:
-                    row.counterpartyName ||
-                    row.vendorName ||
-                    ''
-            },
-            {
-                name: 'description',
-                label: 'รายละเอียด',
-                type: 'text',
-                value:
-                    row.description ||
-                    '',
-                required: true
-            },
-            {
-                name: 'amount',
-                label: 'จำนวนเงิน',
-                type: 'number',
-                value:
-                    row.amount ||
-                    '',
-                min: '0',
-                step: '0.01',
-                required: true
-            },
-            {
-                name: 'paymentMethod',
-                label: 'ช่องทางจ่ายเงิน',
-                type: 'select',
-                value:
-                    row.paymentMethod ||
-                    '',
-                options: [
-                    {
-                        value: 'เงินสด',
-                        label: 'เงินสด'
-                    },
-                    {
-                        value: 'โอนเงิน',
-                        label: 'โอนเงิน'
-                    },
-                    {
-                        value: 'บัตร',
-                        label: 'บัตร'
-                    },
-                    {
-                        value: 'เช็ค',
-                        label: 'เช็ค'
-                    },
-                    {
-                        value: 'อื่น ๆ',
-                        label: 'อื่น ๆ'
-                    }
-                ]
-            },
-            {
-                name: 'reference',
-                label: 'เลขอ้างอิง',
-                type: 'text',
-                value:
-                    row.reference ||
-                    ''
-            }
-        ];
+        modal.innerHTML = html;
 
-        openModal({
-            title:
-                state.editingId
-                    ? 'แก้ไขรายจ่าย'
-                    : 'เพิ่มรายจ่าย',
-            subtitle:
-                'กรอกข้อมูลรายการรายจ่าย',
-            fields: fields,
-            submitLabel:
-                'บันทึกรายจ่าย',
-            onSubmit:
-                async function (
-                    values
-                ) {
-                    values.id =
-                        state.editingId ||
-                        row.id ||
-                        '';
+        showElement(modal);
 
-                    await apiRequest(
-                        'saveexpense',
-                        {
-                            data: values
-                        }
-                    );
+        state.modalOpen = true;
+        state.modalSubmitHandler = config.onSubmit || null;
 
-                    showToast(
-                        'บันทึกรายจ่ายสำเร็จ',
-                        'success'
-                    );
+        var form = byId("dynamicModalForm");
 
-                    await loadEntityRows(
-                        'expense',
-                        state.currentPageNumber
-                    );
+        if (form) {
+            form.addEventListener("submit", function (event) {
+                event.preventDefault();
+                event.stopPropagation();
+
+                if (typeof state.modalSubmitHandler === "function") {
+                    state.modalSubmitHandler(form);
                 }
-        });
+            });
+        }
     }
 
-    function openTransferModal(data) {
-        const row =
-            data || {};
+    function closeModal() {
+        var modal = byId("modalContainer");
 
-        const fields = [
-            {
-                name: 'date',
-                label: 'วันที่',
-                type: 'date',
-                value:
-                    toInputDate(
-                        row.date
-                    ),
-                required: true
-            },
-            {
-                name: 'docNo',
-                label: 'เลขที่เอกสาร',
-                type: 'text',
-                value:
-                    row.docNo ||
-                    row.documentNo ||
-                    ''
-            },
-            {
-                name: 'fromAccountId',
-                label: 'จากบัญชี',
-                type: 'select',
-                value:
-                    row.fromAccountId ||
-                    row.fromAccount ||
-                    '',
-                options:
-                    accountOptions(
-                        row.fromAccountId
-                    ),
-                required: true
-            },
-            {
-                name: 'toAccountId',
-                label: 'ไปบัญชี',
-                type: 'select',
-                value:
-                    row.toAccountId ||
-                    row.toAccount ||
-                    '',
-                options:
-                    accountOptions(
-                        row.toAccountId
-                    ),
-                required: true
-            },
-            {
-                name: 'amount',
-                label: 'จำนวนเงิน',
-                type: 'number',
-                value:
-                    row.amount ||
-                    '',
-                min: '0',
-                step: '0.01',
-                required: true
-            },
-            {
-                name: 'description',
-                label: 'รายละเอียด',
-                type: 'text',
-                value:
-                    row.description ||
-                    ''
-            },
-            {
-                name: 'reference',
-                label: 'เลขอ้างอิง',
-                type: 'text',
-                value:
-                    row.reference ||
-                    ''
-            }
-        ];
-
-        openModal({
-            title:
-                state.editingId
-                    ? 'แก้ไขรายการโอน'
-                    : 'โอนเงินระหว่างบัญชี',
-            subtitle:
-                'บันทึกการเคลื่อนไหวระหว่างบัญชี',
-            fields: fields,
-            submitLabel:
-                'บันทึกการโอน',
-            onSubmit:
-                async function (
-                    values
-                ) {
-                    if (
-                        values.fromAccountId ===
-                        values.toAccountId
-                    ) {
-                        throw new Error(
-                            'บัญชีต้นทางและบัญชีปลายทางต้องไม่เป็นบัญชีเดียวกัน'
-                        );
-                    }
-
-                    values.id =
-                        state.editingId ||
-                        row.id ||
-                        '';
-
-                    await apiRequest(
-                        'savetransfer',
-                        {
-                            data: values
-                        }
-                    );
-
-                    showToast(
-                        'บันทึกรายการโอนสำเร็จ',
-                        'success'
-                    );
-
-                    await loadEntityRows(
-                        'transfers',
-                        state.currentPageNumber
-                    );
-                }
-        });
-    }
-
-    function openAccountModal(data) {
-        const row =
-            data || {};
-
-        const fields = [
-            {
-                name: 'code',
-                label: 'รหัสบัญชี',
-                type: 'text',
-                value:
-                    row.code ||
-                    '',
-                required: true
-            },
-            {
-                name: 'name',
-                label: 'ชื่อบัญชี',
-                type: 'text',
-                value:
-                    row.name ||
-                    '',
-                required: true
-            },
-            {
-                name: 'type',
-                label: 'ประเภทบัญชี',
-                type: 'select',
-                value:
-                    row.type ||
-                    '',
-                options: [
-                    {
-                        value: 'เงินสด',
-                        label: 'เงินสด'
-                    },
-                    {
-                        value: 'ธนาคาร',
-                        label: 'ธนาคาร'
-                    },
-                    {
-                        value: 'e-Wallet',
-                        label: 'e-Wallet'
-                    },
-                    {
-                        value: 'อื่น ๆ',
-                        label: 'อื่น ๆ'
-                    }
-                ],
-                required: true
-            },
-            {
-                name: 'openingBalance',
-                label: 'ยอดยกมา',
-                type: 'number',
-                value:
-                    row.openingBalance ||
-                    0,
-                step: '0.01'
-            },
-            {
-                name: 'active',
-                label: 'สถานะ',
-                type: 'checkbox',
-                value:
-                    row.active !== undefined
-                        ? row.active
-                        : true,
-                checkboxLabel:
-                    'เปิดใช้งานบัญชี'
-            },
-            {
-                name: 'description',
-                label: 'รายละเอียด',
-                type: 'textarea',
-                value:
-                    row.description ||
-                    ''
-            }
-        ];
-
-        openModal({
-            title:
-                state.editingId
-                    ? 'แก้ไขบัญชี'
-                    : 'เพิ่มบัญชี',
-            fields: fields,
-            submitLabel:
-                'บันทึกบัญชี',
-            onSubmit:
-                async function (
-                    values
-                ) {
-                    values.id =
-                        state.editingId ||
-                        row.id ||
-                        '';
-
-                    const action =
-                        values.id
-                            ? 'update'
-                            : 'create';
-
-                    await apiRequest(
-                        action,
-                        {
-                            entity: 'accounts',
-                            sheet: 'Accounts',
-                            data: values,
-                            id: values.id
-                        }
-                    );
-
-                    showToast(
-                        'บันทึกบัญชีสำเร็จ',
-                        'success'
-                    );
-
-                    await loadBootstrap();
-
-                    await loadEntityRows(
-                        'accounts',
-                        1
-                    );
-                }
-        });
-    }
-
-    function openCategoryModal(data) {
-        const row =
-            data || {};
-
-        const fields = [
-            {
-                name: 'code',
-                label: 'รหัสหมวดหมู่',
-                type: 'text',
-                value:
-                    row.code ||
-                    '',
-                required: true
-            },
-            {
-                name: 'name',
-                label: 'ชื่อหมวดหมู่',
-                type: 'text',
-                value:
-                    row.name ||
-                    '',
-                required: true
-            },
-            {
-                name: 'type',
-                label: 'ประเภท',
-                type: 'select',
-                value:
-                    row.type ||
-                    '',
-                options: [
-                    {
-                        value: 'income',
-                        label: 'รายรับ'
-                    },
-                    {
-                        value: 'expense',
-                        label: 'รายจ่าย'
-                    },
-                    {
-                        value: 'both',
-                        label: 'ใช้ได้ทั้งสองประเภท'
-                    }
-                ],
-                required: true
-            },
-            {
-                name: 'active',
-                label: 'สถานะ',
-                type: 'checkbox',
-                value:
-                    row.active !== undefined
-                        ? row.active
-                        : true,
-                checkboxLabel:
-                    'เปิดใช้งานหมวดหมู่'
-            },
-            {
-                name: 'description',
-                label: 'รายละเอียด',
-                type: 'textarea',
-                value:
-                    row.description ||
-                    ''
-            }
-        ];
-
-        openModal({
-            title:
-                state.editingId
-                    ? 'แก้ไขหมวดหมู่'
-                    : 'เพิ่มหมวดหมู่',
-            fields: fields,
-            submitLabel:
-                'บันทึกหมวดหมู่',
-            onSubmit:
-                async function (
-                    values
-                ) {
-                    values.id =
-                        state.editingId ||
-                        row.id ||
-                        '';
-
-                    const action =
-                        values.id
-                            ? 'update'
-                            : 'create';
-
-                    await apiRequest(
-                        action,
-                        {
-                            entity: 'categories',
-                            sheet: 'Categories',
-                            data: values,
-                            id: values.id
-                        }
-                    );
-
-                    showToast(
-                        'บันทึกหมวดหมู่สำเร็จ',
-                        'success'
-                    );
-
-                    await loadBootstrap();
-
-                    await loadEntityRows(
-                        'categories',
-                        1
-                    );
-                }
-        });
-    }
-
-    function openPartyModal(entity, data) {
-        const row =
-            data || {};
-
-        const title =
-            entity === 'customers'
-                ? 'ลูกค้า'
-                : 'ผู้จำหน่าย / เจ้าหนี้';
-
-        const fields = [
-            {
-                name: 'code',
-                label: 'รหัส',
-                type: 'text',
-                value:
-                    row.code ||
-                    '',
-                required: true
-            },
-            {
-                name: 'name',
-                label: 'ชื่อ',
-                type: 'text',
-                value:
-                    row.name ||
-                    '',
-                required: true
-            },
-            {
-                name: 'taxId',
-                label: 'เลขประจำตัวผู้เสียภาษี',
-                type: 'text',
-                value:
-                    row.taxId ||
-                    ''
-            },
-            {
-                name: 'address',
-                label: 'ที่อยู่',
-                type: 'textarea',
-                value:
-                    row.address ||
-                    ''
-            },
-            {
-                name: 'phone',
-                label: 'โทรศัพท์',
-                type: 'text',
-                value:
-                    row.phone ||
-                    ''
-            },
-            {
-                name: 'email',
-                label: 'อีเมล',
-                type: 'email',
-                value:
-                    row.email ||
-                    ''
-            },
-            {
-                name: 'contactPerson',
-                label: 'ผู้ติดต่อ',
-                type: 'text',
-                value:
-                    row.contactPerson ||
-                    ''
-            },
-            {
-                name: 'active',
-                label: 'สถานะ',
-                type: 'checkbox',
-                value:
-                    row.active !== undefined
-                        ? row.active
-                        : true,
-                checkboxLabel:
-                    'เปิดใช้งาน'
-            },
-            {
-                name: 'notes',
-                label: 'หมายเหตุ',
-                type: 'textarea',
-                value:
-                    row.notes ||
-                    ''
-            }
-        ];
-
-        openModal({
-            title:
-                state.editingId
-                    ? 'แก้ไข' + title
-                    : 'เพิ่ม' + title,
-            fields: fields,
-            submitLabel:
-                'บันทึกข้อมูล',
-            size:
-                'modal-large',
-            onSubmit:
-                async function (
-                    values
-                ) {
-                    values.id =
-                        state.editingId ||
-                        row.id ||
-                        '';
-
-                    const action =
-                        values.id
-                            ? 'update'
-                            : 'create';
-
-                    await apiRequest(
-                        action,
-                        {
-                            entity: entity,
-                            sheet:
-                                'Customers',
-                            partyType:
-                                entity,
-                            data: values,
-                            id: values.id
-                        }
-                    );
-
-                    showToast(
-                        'บันทึกข้อมูลสำเร็จ',
-                        'success'
-                    );
-
-                    await loadBootstrap();
-
-                    await loadEntityRows(
-                        entity,
-                        1
-                    );
-                }
-        });
-    }
-
-    function openUserModal(data) {
-        if (!isAdmin()) {
-            showToast(
-                'เฉพาะผู้ดูแลระบบเท่านั้น',
-                'warning'
-            );
-
+        if (!modal) {
             return;
         }
 
-        const row =
-            data || {};
+        hideElement(modal);
 
-        const isEdit =
-            !!(
-                state.editingId ||
-                row.id
-            );
+        modal.innerHTML = "";
 
-        const fields = [
+        state.modalOpen = false;
+        state.modalSubmitHandler = null;
+        state.documentItems = [];
+    }
+
+    function formToObject(form) {
+        var data = {};
+        var elements = qsa("input, select, textarea", form);
+
+        elements.forEach(function (element) {
+            if (!element.name) {
+                return;
+            }
+
+            if (element.type === "checkbox") {
+                data[element.name] = element.checked;
+            } else {
+                data[element.name] = element.value;
+            }
+        });
+
+        return data;
+    }
+
+    function commonFinancialFields(record, type) {
+        var source = record || {};
+
+        return [
             {
-                name: 'username',
-                label: 'ชื่อผู้ใช้',
-                type: 'text',
-                value:
-                    row.username ||
-                    '',
-                required: true,
-                readonly:
-                    isEdit
-            },
-            {
-                name: 'password',
-                label:
-                    isEdit
-                        ? 'รหัสผ่านใหม่'
-                        : 'รหัสผ่าน',
-                type: 'password',
-                value: '',
-                required:
-                    !isEdit,
-                placeholder:
-                    isEdit
-                        ? 'เว้นว่างหากไม่ต้องการเปลี่ยน'
-                        : ''
-            },
-            {
-                name: 'fullName',
-                label: 'ชื่อ-นามสกุล',
-                type: 'text',
-                value:
-                    row.fullName ||
-                    ''
-            },
-            {
-                name: 'role',
-                label: 'สิทธิ์',
-                type: 'select',
-                value:
-                    row.role ||
-                    'user',
-                options: [
-                    {
-                        value: 'admin',
-                        label: 'ผู้ดูแลระบบ'
-                    },
-                    {
-                        value: 'staff',
-                        label: 'เจ้าหน้าที่'
-                    },
-                    {
-                        value: 'user',
-                        label: 'ผู้ใช้งาน'
-                    }
-                ],
+                name: "date",
+                label: "วันที่",
+                type: "date",
                 required: true
             },
             {
-                name: 'active',
-                label: 'สถานะ',
-                type: 'checkbox',
-                value:
-                    row.active !== undefined
-                        ? row.active
-                        : true,
-                checkboxLabel:
-                    'เปิดใช้งานผู้ใช้งาน'
+                name: "docNo",
+                label: "เลขที่เอกสาร",
+                type: "text",
+                placeholder: "เว้นว่างเพื่อให้ระบบกำหนดเลขที่"
+            },
+            {
+                name: "accountId",
+                label: "บัญชีรับเงิน / จ่ายเงิน",
+                type: "select",
+                required: true,
+                options: accountOptions(),
+                placeholderOption: "เลือกบัญชี"
+            },
+            {
+                name: "categoryId",
+                label: "หมวดหมู่",
+                type: "select",
+                options: categoryOptions(
+                    "",
+                    type
+                ),
+                placeholderOption: "เลือกหมวดหมู่"
+            },
+            {
+                name: "counterparty",
+                label: type === "income" ?
+                    "ผู้ชำระเงิน / ลูกค้า" :
+                    "ผู้รับเงิน / ผู้จำหน่าย",
+                type: "text"
+            },
+            {
+                name: "description",
+                label: "รายละเอียด",
+                type: "textarea",
+                required: true
+            },
+            {
+                name: "amount",
+                label: "จำนวนเงิน",
+                type: "number",
+                required: true,
+                placeholder: "0.00"
+            },
+            {
+                name: "paymentMethod",
+                label: "วิธีชำระเงิน",
+                type: "select",
+                options: PAYMENT_METHODS,
+                placeholderOption: "เลือกวิธีชำระเงิน"
+            },
+            {
+                name: "reference",
+                label: "เลขอ้างอิง",
+                type: "text"
             }
         ];
-
-        openModal({
-            title:
-                isEdit
-                    ? 'แก้ไขผู้ใช้งาน'
-                    : 'เพิ่มผู้ใช้งาน',
-            fields: fields,
-            submitLabel:
-                'บันทึกผู้ใช้งาน',
-            onSubmit:
-                async function (
-                    values
-                ) {
-                    values.id =
-                        state.editingId ||
-                        row.id ||
-                        '';
-
-                    if (
-                        isEdit &&
-                        !values.password
-                    ) {
-                        delete values.password;
-                    }
-
-                    const action =
-                        values.id
-                            ? 'update'
-                            : 'create';
-
-                    await apiRequest(
-                        action,
-                        {
-                            entity: 'users',
-                            sheet: 'Users',
-                            data: values,
-                            id: values.id
-                        }
-                    );
-
-                    showToast(
-                        'บันทึกผู้ใช้งานสำเร็จ',
-                        'success'
-                    );
-
-                    await loadBootstrap();
-
-                    await loadEntityRows(
-                        'users',
-                        1
-                    );
-                }
-        });
     }
 
-    async function openDocumentModal(data) {
-        const row =
-            data || {};
+    function getRecordValues(record) {
+        var result = {};
 
-        let detail =
-            row;
-
-        if (
-            state.editingId &&
-            !row.items
-        ) {
-            try {
-                const response =
-                    await apiRequest(
-                        'getDocumentWithItems',
-                        {
-                            id:
-                                state.editingId
-                        }
-                    );
-
-                detail =
-                    unwrapResponse(
-                        response
-                    ) ||
-                    row;
-            } catch (error) {
-                console.warn(
-                    'Document detail error:',
-                    error
-                );
-            }
+        if (!record) {
+            return result;
         }
 
-        const partyOptions = [];
+        Object.keys(record).forEach(function (key) {
+            result[key] = record[key];
+        });
 
-        state.customers.forEach(
-            function (customer) {
-                partyOptions.push({
-                    value:
-                        customer.id ||
-                        customer.code ||
-                        '',
-                    label:
-                        'ลูกค้า: ' +
-                        (
-                            customer.name ||
-                            ''
-                        )
-                });
-            }
-        );
+        return result;
+    }
 
-        state.vendors.forEach(
-            function (vendor) {
-                partyOptions.push({
-                    value:
-                        vendor.id ||
-                        vendor.code ||
-                        '',
-                    label:
-                        'ผู้จำหน่าย: ' +
-                        (
-                            vendor.name ||
-                            ''
-                        )
-                });
-            }
-        );
+    function openIncomeModal(record) {
+        var isEdit = !!record;
+        var values = getRecordValues(record);
 
-        const fields = [
-            {
-                name: 'docType',
-                label: 'ประเภทเอกสาร',
-                type: 'select',
-                value:
-                    detail.docType ||
-                    detail.documentType ||
-                    '',
-                optionsHtml:
-                    '<option value="">-- เลือกประเภทเอกสาร --</option>' +
-                    createDocumentTypeOptions(
-                        detail.docType ||
-                        detail.documentType ||
-                        ''
-                    ),
-                required: true
-            },
-            {
-                name: 'date',
-                label: 'วันที่',
-                type: 'date',
-                value:
-                    toInputDate(
-                        detail.date
-                    ),
-                required: true
-            },
-            {
-                name: 'dueDate',
-                label: 'วันครบกำหนด',
-                type: 'date',
-                value:
-                    toInputDate(
-                        detail.dueDate
-                    )
-            },
-            {
-                name: 'docNo',
-                label: 'เลขที่เอกสาร',
-                type: 'text',
-                value:
-                    detail.docNo ||
-                    detail.documentNo ||
-                    '',
-                placeholder:
-                    'เว้นว่างเพื่อให้ระบบออกเลขที่'
-            },
-            {
-                name: 'partyId',
-                label: 'ลูกค้า / ผู้จำหน่าย',
-                type: 'select',
-                value:
-                    detail.customerId ||
-                    detail.vendorId ||
-                    detail.partyId ||
-                    '',
-                options:
-                    partyOptions
-            },
-            {
-                name: 'partyName',
-                label: 'ชื่อคู่ค้า',
-                type: 'text',
-                value:
-                    detail.partyName ||
-                    detail.customerName ||
-                    detail.vendorName ||
-                    ''
-            },
-            {
-                name: 'taxId',
-                label: 'เลขประจำตัวผู้เสียภาษี',
-                type: 'text',
-                value:
-                    detail.taxId ||
-                    ''
-            },
-            {
-                name: 'address',
-                label: 'ที่อยู่',
-                type: 'textarea',
-                value:
-                    detail.address ||
-                    ''
-            },
-            {
-                name: 'phone',
-                label: 'โทรศัพท์',
-                type: 'text',
-                value:
-                    detail.phone ||
-                    ''
-            },
-            {
-                name: 'subject',
-                label: 'เรื่อง / รายละเอียด',
-                type: 'text',
-                value:
-                    detail.subject ||
-                    detail.description ||
-                    ''
-            },
-            {
-                name: 'discount',
-                label: 'ส่วนลด',
-                type: 'number',
-                value:
-                    detail.discount ||
-                    0,
-                min: '0',
-                step: '0.01'
-            },
-            {
-                name: 'taxRate',
-                label: 'ภาษีมูลค่าเพิ่ม (%)',
-                type: 'number',
-                value:
-                    detail.taxRate !== undefined
-                        ? detail.taxRate
-                        : 7,
-                min: '0',
-                step: '0.01'
-            },
-            {
-                name: 'notes',
-                label: 'หมายเหตุ',
-                type: 'textarea',
-                value:
-                    detail.notes ||
-                    ''
-            }
-        ];
+        if (!values.date) {
+            values.date = toInputDate();
+        }
 
         openModal({
-            title:
-                state.editingId
-                    ? 'แก้ไขเอกสาร'
-                    : 'สร้างเอกสาร',
-            subtitle:
-                'กรอกข้อมูลเอกสารและรายการสินค้า',
-            fields: fields,
-            submitLabel:
-                'บันทึกเอกสาร',
-            size:
-                'modal-xlarge',
-            afterOpen:
-                function (container) {
-                    appendDocumentItemsEditor(
-                        container,
-                        detail.items ||
-                        detail.documentItems ||
-                        []
-                    );
-                },
-            onSubmit:
-                async function (
-                    values
-                ) {
-                    const items =
-                        collectDocumentItems();
+            title: isEdit ? "แก้ไขรายรับ" : "เพิ่มรายรับ",
+            submitLabel: isEdit ? "บันทึกการแก้ไข" : "บันทึกรายรับ",
+            fields: commonFinancialFields(values, "income"),
+            values: values,
+            onSubmit: async function (form) {
+                var data = formToObject(form);
 
-                    if (!items.length) {
-                        throw new Error(
-                            'กรุณาเพิ่มรายการในเอกสารอย่างน้อย 1 รายการ'
+                data.amount = parseNumber(data.amount);
+
+                if (!data.date) {
+                    showToast("กรุณาระบุวันที่", "warning");
+                    return;
+                }
+
+                if (!data.description) {
+                    showToast("กรุณาระบุรายละเอียด", "warning");
+                    return;
+                }
+
+                if (data.amount <= 0) {
+                    showToast("จำนวนเงินต้องมากกว่า 0", "warning");
+                    return;
+                }
+
+                try {
+                    setModalBusy(true);
+
+                    var response;
+
+                    if (isEdit) {
+                        response = await apiRequest(
+                            "saveincome",
+                            {
+                                id: record.id,
+                                data: data
+                            },
+                            {
+                                includeToken: true
+                            }
+                        );
+                    } else {
+                        response = await apiRequest(
+                            "saveincome",
+                            {
+                                data: data
+                            },
+                            {
+                                includeToken: true
+                            }
                         );
                     }
 
-                    const calculated =
-                        calculateDocumentTotals(
-                            items,
-                            values.discount,
-                            values.taxRate
+                    if (!responseSuccess(response)) {
+                        throw createError(
+                            extractMessage(response),
+                            0,
+                            "SAVE_INCOME_FAILED",
+                            response
                         );
+                    }
 
-                    const documentData =
-                        Object.assign(
-                            {},
-                            values,
-                            {
-                                id:
-                                    state.editingId ||
-                                    detail.id ||
-                                    '',
-                                subtotal:
-                                    calculated.subtotal,
-                                discount:
-                                    calculated.discount,
-                                taxAmount:
-                                    calculated.taxAmount,
-                                total:
-                                    calculated.total,
-                                grandTotal:
-                                    calculated.total
-                            }
-                        );
-
-                    await apiRequest(
-                        'savedocument',
-                        {
-                            data:
-                                documentData,
-                            items:
-                                items
-                        }
-                    );
-
+                    closeModal();
                     showToast(
-                        'บันทึกเอกสารสำเร็จ',
-                        'success'
+                        isEdit ?
+                        "แก้ไขรายรับเรียบร้อยแล้ว" :
+                        "บันทึกรายรับเรียบร้อยแล้ว",
+                        "success"
                     );
 
-                    await loadEntityRows(
-                        'documents',
-                        1
+                    await renderIncomePage();
+                } catch (error) {
+                    showToast(
+                        error.message || "บันทึกรายรับไม่สำเร็จ",
+                        "error"
                     );
+                } finally {
+                    setModalBusy(false);
                 }
+            }
         });
     }
 
-    function appendDocumentItemsEditor(
-        container,
-        existingItems
-    ) {
-        const form =
-            container.querySelector(
-                '#dynamicModalForm'
-            );
+    function openExpenseModal(record) {
+        var isEdit = !!record;
+        var values = getRecordValues(record);
+
+        if (!values.date) {
+            values.date = toInputDate();
+        }
+
+        openModal({
+            title: isEdit ? "แก้ไขรายจ่าย" : "เพิ่มรายจ่าย",
+            submitLabel: isEdit ? "บันทึกการแก้ไข" : "บันทึกรายจ่าย",
+            fields: commonFinancialFields(values, "expense"),
+            values: values,
+            onSubmit: async function (form) {
+                var data = formToObject(form);
+
+                data.amount = parseNumber(data.amount);
+
+                if (!data.date) {
+                    showToast("กรุณาระบุวันที่", "warning");
+                    return;
+                }
+
+                if (!data.description) {
+                    showToast("กรุณาระบุรายละเอียด", "warning");
+                    return;
+                }
+
+                if (data.amount <= 0) {
+                    showToast("จำนวนเงินต้องมากกว่า 0", "warning");
+                    return;
+                }
+
+                try {
+                    setModalBusy(true);
+
+                    var response;
+
+                    if (isEdit) {
+                        response = await apiRequest(
+                            "saveexpense",
+                            {
+                                id: record.id,
+                                data: data
+                            },
+                            {
+                                includeToken: true
+                            }
+                        );
+                    } else {
+                        response = await apiRequest(
+                            "saveexpense",
+                            {
+                                data: data
+                            },
+                            {
+                                includeToken: true
+                            }
+                        );
+                    }
+
+                    if (!responseSuccess(response)) {
+                        throw createError(
+                            extractMessage(response),
+                            0,
+                            "SAVE_EXPENSE_FAILED",
+                            response
+                        );
+                    }
+
+                    closeModal();
+                    showToast(
+                        isEdit ?
+                        "แก้ไขรายจ่ายเรียบร้อยแล้ว" :
+                        "บันทึกรายจ่ายเรียบร้อยแล้ว",
+                        "success"
+                    );
+
+                    await renderExpensePage();
+                } catch (error) {
+                    showToast(
+                        error.message || "บันทึกรายจ่ายไม่สำเร็จ",
+                        "error"
+                    );
+                } finally {
+                    setModalBusy(false);
+                }
+            }
+        });
+    }
+
+    function openTransferModal(record) {
+        var isEdit = !!record;
+        var values = getRecordValues(record);
+
+        if (!values.date) {
+            values.date = toInputDate();
+        }
+
+        openModal({
+            title: isEdit ?
+                "แก้ไขรายการโอนเงิน" :
+                "เพิ่มรายการโอนเงิน",
+            submitLabel: "บันทึก",
+            fields: [
+                {
+                    name: "date",
+                    label: "วันที่",
+                    type: "date",
+                    required: true
+                },
+                {
+                    name: "docNo",
+                    label: "เลขที่เอกสาร",
+                    type: "text"
+                },
+                {
+                    name: "fromAccountId",
+                    label: "จากบัญชี",
+                    type: "select",
+                    required: true,
+                    options: accountOptions(),
+                    placeholderOption: "เลือกบัญชีต้นทาง"
+                },
+                {
+                    name: "toAccountId",
+                    label: "ไปบัญชี",
+                    type: "select",
+                    required: true,
+                    options: accountOptions(),
+                    placeholderOption: "เลือกบัญชีปลายทาง"
+                },
+                {
+                    name: "amount",
+                    label: "จำนวนเงิน",
+                    type: "number",
+                    required: true
+                },
+                {
+                    name: "description",
+                    label: "รายละเอียด",
+                    type: "textarea"
+                },
+                {
+                    name: "reference",
+                    label: "เลขอ้างอิง",
+                    type: "text"
+                }
+            ],
+            values: values,
+            onSubmit: async function (form) {
+                var data = formToObject(form);
+
+                data.amount = parseNumber(data.amount);
+
+                if (
+                    data.fromAccountId &&
+                    data.toAccountId &&
+                    String(data.fromAccountId) === String(data.toAccountId)
+                ) {
+                    showToast("บัญชีต้นทางและปลายทางต้องไม่เป็นบัญชีเดียวกัน", "warning");
+                    return;
+                }
+
+                if (data.amount <= 0) {
+                    showToast("จำนวนเงินต้องมากกว่า 0", "warning");
+                    return;
+                }
+
+                try {
+                    setModalBusy(true);
+
+                    var response = await apiRequest(
+                        "savetransfer",
+                        {
+                            id: isEdit ? record.id : "",
+                            data: data
+                        },
+                        {
+                            includeToken: true
+                        }
+                    );
+
+                    if (!responseSuccess(response)) {
+                        throw createError(
+                            extractMessage(response),
+                            0,
+                            "SAVE_TRANSFER_FAILED",
+                            response
+                        );
+                    }
+
+                    closeModal();
+                    showToast("บันทึกรายการโอนเรียบร้อยแล้ว", "success");
+
+                    await renderTransfersPage();
+                } catch (error) {
+                    showToast(
+                        error.message || "ไม่สามารถบันทึกรายการโอนได้",
+                        "error"
+                    );
+                } finally {
+                    setModalBusy(false);
+                }
+            }
+        });
+    }
+
+    function openAccountModal(record) {
+        var isEdit = !!record;
+        var values = getRecordValues(record);
+
+        openModal({
+            title: isEdit ? "แก้ไขบัญชี" : "เพิ่มบัญชี",
+            submitLabel: "บันทึก",
+            fields: [
+                {
+                    name: "code",
+                    label: "รหัสบัญชี",
+                    type: "text",
+                    required: true
+                },
+                {
+                    name: "name",
+                    label: "ชื่อบัญชี",
+                    type: "text",
+                    required: true
+                },
+                {
+                    name: "type",
+                    label: "ประเภทบัญชี",
+                    type: "select",
+                    required: true,
+                    options: ACCOUNT_TYPES,
+                    placeholderOption: "เลือกประเภท"
+                },
+                {
+                    name: "openingBalance",
+                    label: "ยอดยกมา",
+                    type: "number"
+                },
+                {
+                    name: "active",
+                    label: "เปิดใช้งานบัญชี",
+                    type: "checkbox"
+                },
+                {
+                    name: "description",
+                    label: "รายละเอียด",
+                    type: "textarea"
+                }
+            ],
+            values: values,
+            onSubmit: async function (form) {
+                var data = formToObject(form);
+
+                data.openingBalance = parseNumber(data.openingBalance);
+
+                if (!data.code || !data.name) {
+                    showToast("กรุณากรอกรหัสและชื่อบัญชี", "warning");
+                    return;
+                }
+
+                try {
+                    setModalBusy(true);
+
+                    var response = isEdit ?
+                        await updateEntity(
+                            "Accounts",
+                            record.id,
+                            data
+                        ) :
+                        await createEntity(
+                            "Accounts",
+                            data
+                        );
+
+                    if (!responseSuccess(response)) {
+                        throw createError(
+                            extractMessage(response),
+                            0,
+                            "ACCOUNT_SAVE_FAILED",
+                            response
+                        );
+                    }
+
+                    closeModal();
+                    showToast("บันทึกบัญชีเรียบร้อยแล้ว", "success");
+
+                    await renderAccountsPage();
+                } catch (error) {
+                    showToast(
+                        error.message || "ไม่สามารถบันทึกบัญชีได้",
+                        "error"
+                    );
+                } finally {
+                    setModalBusy(false);
+                }
+            }
+        });
+    }
+
+    function openCustomerModal(record) {
+        openPartyModal(
+            "Customers",
+            record,
+            "ลูกค้า",
+            "add-customer",
+            "edit-customer"
+        );
+    }
+
+    function openVendorModal(record) {
+        openPartyModal(
+            "Vendors",
+            record,
+            "ผู้จำหน่าย / เจ้าหนี้",
+            "add-vendor",
+            "edit-vendor"
+        );
+    }
+
+    function openPartyModal(entity, record, title, addAction, editAction) {
+        var isEdit = !!record;
+        var values = getRecordValues(record);
+
+        openModal({
+            title: isEdit ?
+                "แก้ไข" + title :
+                "เพิ่ม" + title,
+            submitLabel: "บันทึก",
+            fields: [
+                {
+                    name: "code",
+                    label: "รหัส",
+                    type: "text"
+                },
+                {
+                    name: "name",
+                    label: "ชื่อ",
+                    type: "text",
+                    required: true
+                },
+                {
+                    name: "taxId",
+                    label: "เลขประจำตัวผู้เสียภาษี",
+                    type: "text"
+                },
+                {
+                    name: "address",
+                    label: "ที่อยู่",
+                    type: "textarea"
+                },
+                {
+                    name: "phone",
+                    label: "โทรศัพท์",
+                    type: "tel"
+                },
+                {
+                    name: "email",
+                    label: "อีเมล",
+                    type: "email"
+                },
+                {
+                    name: "contactPerson",
+                    label: "ผู้ติดต่อ",
+                    type: "text"
+                },
+                {
+                    name: "active",
+                    label: "เปิดใช้งาน",
+                    type: "checkbox"
+                },
+                {
+                    name: "notes",
+                    label: "หมายเหตุ",
+                    type: "textarea"
+                }
+            ],
+            values: values,
+            onSubmit: async function (form) {
+                var data = formToObject(form);
+
+                if (!data.name) {
+                    showToast("กรุณาระบุชื่อ", "warning");
+                    return;
+                }
+
+                try {
+                    setModalBusy(true);
+
+                    var response = isEdit ?
+                        await updateEntity(
+                            entity,
+                            record.id,
+                            data
+                        ) :
+                        await createEntity(
+                            entity,
+                            data
+                        );
+
+                    if (!responseSuccess(response)) {
+                        throw createError(
+                            extractMessage(response),
+                            0,
+                            "PARTY_SAVE_FAILED",
+                            response
+                        );
+                    }
+
+                    closeModal();
+                    showToast("บันทึกข้อมูลเรียบร้อยแล้ว", "success");
+
+                    if (entity === "Customers") {
+                        await renderCustomersPage();
+                    } else {
+                        await renderVendorsPage();
+                    }
+                } catch (error) {
+                    showToast(
+                        error.message || "ไม่สามารถบันทึกข้อมูลได้",
+                        "error"
+                    );
+                } finally {
+                    setModalBusy(false);
+                }
+            }
+        });
+    }
+
+    function openUserModal(record) {
+        if (!isAdmin()) {
+            showToast("คุณไม่มีสิทธิ์จัดการผู้ใช้งาน", "warning");
+            return;
+        }
+
+        var isEdit = !!record;
+        var values = getRecordValues(record);
+
+        openModal({
+            title: isEdit ?
+                "แก้ไขผู้ใช้งาน" :
+                "เพิ่มผู้ใช้งาน",
+            submitLabel: "บันทึก",
+            fields: [
+                {
+                    name: "username",
+                    label: "ชื่อผู้ใช้งาน",
+                    type: "text",
+                    required: true
+                },
+                {
+                    name: "password",
+                    label: isEdit ?
+                        "รหัสผ่านใหม่ หากไม่เปลี่ยนให้เว้นว่าง" :
+                        "รหัสผ่าน",
+                    type: "password",
+                    required: !isEdit
+                },
+                {
+                    name: "fullName",
+                    label: "ชื่อ-นามสกุล",
+                    type: "text",
+                    required: true
+                },
+                {
+                    name: "role",
+                    label: "สิทธิ์",
+                    type: "select",
+                    required: true,
+                    options: USER_ROLES,
+                    placeholderOption: "เลือกสิทธิ์"
+                },
+                {
+                    name: "active",
+                    label: "เปิดใช้งาน",
+                    type: "checkbox"
+                }
+            ],
+            values: values,
+            onSubmit: async function (form) {
+                var data = formToObject(form);
+
+                if (!data.username || !data.fullName) {
+                    showToast("กรุณากรอกข้อมูลให้ครบ", "warning");
+                    return;
+                }
+
+                if (!isEdit && !data.password) {
+                    showToast("กรุณากรอกรหัสผ่าน", "warning");
+                    return;
+                }
+
+                try {
+                    setModalBusy(true);
+
+                    var response;
+
+                    if (isEdit) {
+                        response = await updateEntity(
+                            "Users",
+                            record.id,
+                            data
+                        );
+                    } else {
+                        response = await createEntity(
+                            "Users",
+                            data
+                        );
+                    }
+
+                    if (!responseSuccess(response)) {
+                        throw createError(
+                            extractMessage(response),
+                            0,
+                            "USER_SAVE_FAILED",
+                            response
+                        );
+                    }
+
+                    closeModal();
+                    showToast("บันทึกผู้ใช้งานเรียบร้อยแล้ว", "success");
+
+                    await renderUsersPage();
+                } catch (error) {
+                    showToast(
+                        error.message || "ไม่สามารถบันทึกผู้ใช้งานได้",
+                        "error"
+                    );
+                } finally {
+                    setModalBusy(false);
+                }
+            }
+        });
+    }
+
+    function openSettingModal(record) {
+        if (!isAdmin()) {
+            showToast("คุณไม่มีสิทธิ์แก้ไขการตั้งค่า", "warning");
+            return;
+        }
+
+        var isEdit = !!record;
+        var values = getRecordValues(record);
+
+        openModal({
+            title: isEdit ?
+                "แก้ไขการตั้งค่า" :
+                "เพิ่มการตั้งค่า",
+            submitLabel: "บันทึก",
+            fields: [
+                {
+                    name: "key",
+                    label: "Key",
+                    type: "text",
+                    required: true
+                },
+                {
+                    name: "value",
+                    label: "ค่า",
+                    type: "text"
+                },
+                {
+                    name: "description",
+                    label: "คำอธิบาย",
+                    type: "textarea"
+                }
+            ],
+            values: values,
+            onSubmit: async function (form) {
+                var data = formToObject(form);
+
+                if (!data.key) {
+                    showToast("กรุณาระบุ Key", "warning");
+                    return;
+                }
+
+                try {
+                    setModalBusy(true);
+
+                    var response;
+
+                    if (isEdit) {
+                        response = await apiRequest(
+                            "updatesetting",
+                            {
+                                id: record.id,
+                                key: data.key,
+                                value: data.value,
+                                description: data.description
+                            },
+                            {
+                                includeToken: true
+                            }
+                        );
+                    } else {
+                        response = await createEntity(
+                            "Settings",
+                            data
+                        );
+                    }
+
+                    if (!responseSuccess(response)) {
+                        throw createError(
+                            extractMessage(response),
+                            0,
+                            "SETTING_SAVE_FAILED",
+                            response
+                        );
+                    }
+
+                    closeModal();
+                    showToast("บันทึกการตั้งค่าเรียบร้อยแล้ว", "success");
+
+                    await renderSettingsPage();
+                } catch (error) {
+                    showToast(
+                        error.message || "ไม่สามารถบันทึกการตั้งค่าได้",
+                        "error"
+                    );
+                } finally {
+                    setModalBusy(false);
+                }
+            }
+        });
+    }
+
+    function setModalBusy(value) {
+        var form = byId("dynamicModalForm");
 
         if (!form) {
             return;
         }
 
-        state.currentDocumentItems =
-            normalizeArray(
-                existingItems
-            ).map(
-                function (item) {
-                    return Object.assign(
-                        {},
-                        item
-                    );
-                }
-            );
-
-        const body =
-            form.querySelector(
-                '.modal-body'
-            );
-
-        if (!body) {
-            return;
-        }
-
-        const wrapper =
-            document.createElement(
-                'div'
-            );
-
-        wrapper.className =
-            'document-items-editor';
-
-        wrapper.innerHTML =
-            '<div class="document-items-header">' +
-            '<div>' +
-            '<h3>รายการในเอกสาร</h3>' +
-            '<p>เพิ่มสินค้า บริการ หรือรายการที่เกี่ยวข้อง</p>' +
-            '</div>' +
-            '<button type="button" class="btn btn-secondary" data-action="add-document-item">＋ เพิ่มรายการ</button>' +
-            '</div>' +
-            '<div id="documentItemsRows"></div>' +
-            '<div id="documentTotals" class="document-totals"></div>';
-
-        body.appendChild(
-            wrapper
+        var controls = qsa(
+            "input, select, textarea, button",
+            form
         );
 
-        renderDocumentItemsRows();
+        controls.forEach(function (control) {
+            control.disabled = !!value;
+        });
     }
 
-    function renderDocumentItemsRows() {
-        const container =
-            byId(
-                'documentItemsRows'
+    function buildDocumentItemRow(item, index) {
+        var row = item || {};
+
+        return (
+            '<div class="document-item-row" data-document-item-row="' +
+            escapeAttribute(index) +
+            '">' +
+            '<div class="form-group">' +
+            "<label>รายการ</label>" +
+            '<input type="text" class="form-control" data-item-field="description" value="' +
+            escapeAttribute(row.description || "") +
+            '">' +
+            "</div>" +
+            '<div class="form-group">' +
+            "<label>จำนวน</label>" +
+            '<input type="number" step="0.01" class="form-control" data-item-field="quantity" value="' +
+            escapeAttribute(
+                row.quantity === undefined ?
+                1 :
+                row.quantity
+            ) +
+            '">' +
+            "</div>" +
+            '<div class="form-group">' +
+            "<label>หน่วยละ</label>" +
+            '<input type="number" step="0.01" class="form-control" data-item-field="unitPrice" value="' +
+            escapeAttribute(row.unitPrice || "") +
+            '">' +
+            "</div>" +
+            '<div class="form-group">' +
+            "<label>รวม</label>" +
+            '<input type="number" step="0.01" class="form-control" data-item-field="total" value="' +
+            escapeAttribute(row.total || "") +
+            '" readonly>' +
+            "</div>" +
+            '<div class="form-group document-item-remove">' +
+            '<button type="button" class="btn btn-danger btn-sm" data-remove-document-item="' +
+            escapeAttribute(index) +
+            '">ลบ</button>' +
+            "</div>" +
+            "</div>"
+        );
+    }
+
+    function openDocumentModal(record) {
+        var isEdit = !!record;
+        var values = getRecordValues(record);
+
+        state.documentItems = [];
+
+        if (record && Array.isArray(record.items)) {
+            state.documentItems = record.items.slice();
+        }
+
+        if (!state.documentItems.length) {
+            state.documentItems.push({
+                description: "",
+                quantity: 1,
+                unitPrice: 0,
+                total: 0
+            });
+        }
+
+        var fields = [
+            {
+                name: "docType",
+                label: "ประเภทเอกสาร",
+                type: "select",
+                required: true,
+                options: DOCUMENT_TYPES,
+                placeholderOption: "เลือกประเภทเอกสาร"
+            },
+            {
+                name: "date",
+                label: "วันที่",
+                type: "date",
+                required: true
+            },
+            {
+                name: "dueDate",
+                label: "วันครบกำหนด",
+                type: "date"
+            },
+            {
+                name: "customerId",
+                label: "ลูกค้า",
+                type: "select",
+                options: customerOptions(),
+                placeholderOption: "เลือกข้อมูลลูกค้า"
+            },
+            {
+                name: "vendorId",
+                label: "ผู้จำหน่าย / เจ้าหนี้",
+                type: "select",
+                options: vendorOptions(),
+                placeholderOption: "เลือกข้อมูลผู้จำหน่าย"
+            },
+            {
+                name: "partyName",
+                label: "ชื่อคู่ค้า",
+                type: "text"
+            },
+            {
+                name: "taxId",
+                label: "เลขประจำตัวผู้เสียภาษี",
+                type: "text"
+            },
+            {
+                name: "address",
+                label: "ที่อยู่",
+                type: "textarea"
+            },
+            {
+                name: "phone",
+                label: "โทรศัพท์",
+                type: "tel"
+            },
+            {
+                name: "subject",
+                label: "เรื่อง",
+                type: "text"
+            },
+            {
+                name: "discount",
+                label: "ส่วนลด",
+                type: "number"
+            },
+            {
+                name: "taxRate",
+                label: "VAT %",
+                type: "number"
+            },
+            {
+                name: "notes",
+                label: "หมายเหตุ",
+                type: "textarea"
+            }
+        ];
+
+        if (!values.date) {
+            values.date = toInputDate();
+        }
+
+        if (values.taxRate === undefined || values.taxRate === "") {
+            values.taxRate = 7;
+        }
+
+        var modal = ensureModal();
+
+        var html =
+            '<div class="modal-backdrop" data-modal-close></div>' +
+            '<div class="modal-dialog modal-dialog-large">' +
+            '<div class="modal-header">' +
+            "<h3>" +
+            escapeHtml(
+                isEdit ?
+                "แก้ไขเอกสาร" :
+                "สร้างเอกสาร"
+            ) +
+            "</h3>" +
+            '<button type="button" class="modal-close" data-modal-close aria-label="ปิด">×</button>' +
+            "</div>" +
+            '<form class="modal-form" id="documentModalForm">' +
+            '<div class="modal-body">';
+
+        html += '<div class="form-grid">';
+
+        fields.forEach(function (field) {
+            html += createFormField(
+                field,
+                values[field.name]
             );
+        });
+
+        html += "</div>";
+
+        html +=
+            '<div class="document-items-section">' +
+            '<div class="document-items-header">' +
+            "<h4>รายการสินค้า / บริการ</h4>" +
+            '<button type="button" class="btn btn-secondary btn-sm" data-action="add-document-item">เพิ่มรายการ</button>' +
+            "</div>" +
+            '<div id="documentItemsContainer">';
+
+        state.documentItems.forEach(function (item, index) {
+            html += buildDocumentItemRow(item, index);
+        });
+
+        html +=
+            "</div>" +
+            '<div class="document-summary">' +
+            '<div><span>รวมก่อนส่วนลด</span><strong id="documentSubtotal">0.00</strong></div>' +
+            '<div><span>ส่วนลด</span><strong id="documentDiscount">0.00</strong></div>' +
+            '<div><span>ฐานภาษี</span><strong id="documentTaxBase">0.00</strong></div>' +
+            '<div><span>VAT</span><strong id="documentTax">0.00</strong></div>' +
+            '<div class="document-grand-total"><span>ยอดรวมทั้งสิ้น</span><strong id="documentGrandTotal">0.00</strong></div>' +
+            "</div>" +
+            "</div>";
+
+        html +=
+            "</div>" +
+            '<div class="modal-footer">' +
+            '<button type="button" class="btn btn-secondary" data-modal-close>ยกเลิก</button>' +
+            '<button type="submit" class="btn btn-primary">บันทึกเอกสาร</button>' +
+            "</div>" +
+            "</form>" +
+            "</div>";
+
+        modal.innerHTML = html;
+
+        showElement(modal);
+
+        state.modalOpen = true;
+
+        updateDocumentTotals();
+
+        var form = byId("documentModalForm");
+
+        if (form) {
+            form.addEventListener("submit", function (event) {
+                event.preventDefault();
+                event.stopPropagation();
+
+                saveDocumentFromForm(form, record);
+            });
+        }
+    }
+
+    function readDocumentItems() {
+        var container = byId("documentItemsContainer");
 
         if (!container) {
-            return;
+            return [];
         }
 
-        let html = '';
-
-        state.currentDocumentItems.forEach(
-            function (item, index) {
-                html +=
-                    '<div class="document-item-row" data-item-index="' +
-                    index +
-                    '">' +
-                    '<div class="form-group">' +
-                    '<label>รายการ</label>' +
-                    '<input type="text" data-item-field="description" value="' +
-                    escapeHtml(
-                        item.description ||
-                        item.name ||
-                        ''
-                    ) +
-                    '">' +
-                    '</div>' +
-                    '<div class="form-group">' +
-                    '<label>จำนวน</label>' +
-                    '<input type="number" data-item-field="quantity" value="' +
-                    escapeHtml(
-                        item.quantity !== undefined
-                            ? item.quantity
-                            : 1
-                    ) +
-                    '" min="0" step="0.01">' +
-                    '</div>' +
-                    '<div class="form-group">' +
-                    '<label>หน่วย</label>' +
-                    '<input type="text" data-item-field="unit" value="' +
-                    escapeHtml(
-                        item.unit ||
-                        ''
-                    ) +
-                    '">' +
-                    '</div>' +
-                    '<div class="form-group">' +
-                    '<label>ราคาต่อหน่วย</label>' +
-                    '<input type="number" data-item-field="unitPrice" value="' +
-                    escapeHtml(
-                        item.unitPrice !== undefined
-                            ? item.unitPrice
-                            : 0
-                    ) +
-                    '" min="0" step="0.01">' +
-                    '</div>' +
-                    '<div class="form-group">' +
-                    '<label>รวม</label>' +
-                    '<input type="text" class="item-line-total" value="' +
-                    escapeHtml(
-                        formatMoney(
-                            parseNumber(
-                                item.quantity
-                            ) *
-                            parseNumber(
-                                item.unitPrice
-                            )
-                        )
-                    ) +
-                    '" readonly>' +
-                    '</div>' +
-                    '<div class="form-group item-remove">' +
-                    '<label>&nbsp;</label>' +
-                    '<button type="button" class="btn btn-danger" data-action="remove-document-item" data-index="' +
-                    index +
-                    '">ลบ</button>' +
-                    '</div>' +
-                    '</div>';
-            }
+        var rows = qsa(
+            "[data-document-item-row]",
+            container
         );
 
-        if (!html) {
-            html =
-                '<div class="empty-state compact">' +
-                'ยังไม่มีรายการ กด “เพิ่มรายการ” เพื่อเริ่มต้น' +
-                '</div>';
-        }
+        var items = [];
 
-        container.innerHTML =
-            html;
+        rows.forEach(function (row) {
+            var descriptionElement = row.querySelector(
+                '[data-item-field="description"]'
+            );
 
-        updateDocumentTotalsFromEditor();
-    }
+            var quantityElement = row.querySelector(
+                '[data-item-field="quantity"]'
+            );
 
-    function collectDocumentItems() {
-        const rows =
-            $$('.document-item-row');
+            var unitPriceElement = row.querySelector(
+                '[data-item-field="unitPrice"]'
+            );
 
-        const items = [];
+            var totalElement = row.querySelector(
+                '[data-item-field="total"]'
+            );
 
-        rows.forEach(
-            function (row) {
-                const index =
-                    parseInt(
-                        row.getAttribute(
-                            'data-item-index'
-                        ),
-                        10
-                    );
+            var quantity = parseNumber(
+                quantityElement ? quantityElement.value : 0
+            );
 
-                const original =
-                    state.currentDocumentItems[
-                        index
-                    ] || {};
+            var unitPrice = parseNumber(
+                unitPriceElement ? unitPriceElement.value : 0
+            );
 
-                const description =
-                    getItemField(
-                        row,
-                        'description'
-                    );
+            var total = quantity * unitPrice;
 
-                const quantity =
-                    parseNumber(
-                        getItemField(
-                            row,
-                            'quantity'
-                        )
-                    );
-
-                const unit =
-                    getItemField(
-                        row,
-                        'unit'
-                    );
-
-                const unitPrice =
-                    parseNumber(
-                        getItemField(
-                            row,
-                            'unitPrice'
-                        )
-                    );
-
-                if (
-                    !description &&
-                    quantity === 0 &&
-                    unitPrice === 0
-                ) {
-                    return;
-                }
-
-                items.push(
-                    Object.assign(
-                        {},
-                        original,
-                        {
-                            id:
-                                original.id ||
-                                generateId(),
-                            description:
-                                description,
-                            quantity:
-                                quantity ||
-                                1,
-                            unit:
-                                unit,
-                            unitPrice:
-                                unitPrice,
-                            amount:
-                                (
-                                    quantity ||
-                                    1
-                                ) *
-                                unitPrice
-                        }
-                    )
-                );
+            if (totalElement) {
+                totalElement.value = total.toFixed(2);
             }
-        );
+
+            items.push({
+                description: descriptionElement ?
+                    descriptionElement.value :
+                    "",
+                quantity: quantity,
+                unitPrice: unitPrice,
+                total: total
+            });
+        });
 
         return items;
     }
 
-    function getItemField(row, field) {
-        const element =
-            row.querySelector(
-                '[data-item-field="' +
-                CSS.escape(field) +
-                '"]'
-            );
+    function updateDocumentTotals() {
+        var items = readDocumentItems();
 
-        return element
-            ? element.value
-            : '';
-    }
+        var subtotal = 0;
 
-    function calculateDocumentTotals(
-        items,
-        discount,
-        taxRate
-    ) {
-        let subtotal = 0;
+        items.forEach(function (item) {
+            subtotal += parseNumber(item.total);
+        });
 
-        items.forEach(
-            function (item) {
-                const quantity =
-                    parseNumber(
-                        item.quantity
-                    ) || 1;
-
-                const unitPrice =
-                    parseNumber(
-                        item.unitPrice
-                    );
-
-                subtotal +=
-                    quantity *
-                    unitPrice;
-            }
+        var discountElement = qs(
+            '#documentModalForm [name="discount"]'
         );
 
-        const discountAmount =
-            Math.max(
-                0,
-                parseNumber(
-                    discount
-                )
-            );
+        var taxRateElement = qs(
+            '#documentModalForm [name="taxRate"]'
+        );
 
-        const afterDiscount =
-            Math.max(
-                0,
-                subtotal -
-                discountAmount
-            );
+        var discount = discountElement ?
+            parseNumber(discountElement.value) :
+            0;
 
-        const rate =
-            Math.max(
-                0,
-                parseNumber(
-                    taxRate
-                )
-            );
+        var taxRate = taxRateElement ?
+            parseNumber(taxRateElement.value) :
+            0;
 
-        const taxAmount =
-            afterDiscount *
-            rate /
-            100;
+        var taxBase = subtotal - discount;
 
-        const total =
-            afterDiscount +
-            taxAmount;
+        if (taxBase < 0) {
+            taxBase = 0;
+        }
+
+        var tax = taxBase * taxRate / 100;
+
+        var grandTotal = taxBase + tax;
+
+        setTextByIds(
+            ["documentSubtotal"],
+            formatMoney(subtotal)
+        );
+
+        setTextByIds(
+            ["documentDiscount"],
+            formatMoney(discount)
+        );
+
+        setTextByIds(
+            ["documentTaxBase"],
+            formatMoney(taxBase)
+        );
+
+        setTextByIds(
+            ["documentTax"],
+            formatMoney(tax)
+        );
+
+        setTextByIds(
+            ["documentGrandTotal"],
+            formatMoney(grandTotal)
+        );
 
         return {
-            subtotal:
-                subtotal,
-            discount:
-                discountAmount,
-            afterDiscount:
-                afterDiscount,
-            taxAmount:
-                taxAmount,
-            total:
-                total
+            subtotal: subtotal,
+            discount: discount,
+            taxBase: taxBase,
+            tax: tax,
+            total: grandTotal
         };
     }
 
-    function updateDocumentTotalsFromEditor() {
-        const items =
-            collectDocumentItems();
+    async function saveDocumentFromForm(form, record) {
+        var data = formToObject(form);
+        var items = readDocumentItems();
+        var totals = updateDocumentTotals();
 
-        const discountElement =
-            byId(
-                'field-discount'
+        data.discount = parseNumber(data.discount);
+        data.taxRate = parseNumber(data.taxRate);
+        data.subtotal = totals.subtotal;
+        data.taxBase = totals.taxBase;
+        data.tax = totals.tax;
+        data.total = totals.total;
+
+        if (!data.docType) {
+            showToast("กรุณาเลือกประเภทเอกสาร", "warning");
+            return;
+        }
+
+        if (!data.date) {
+            showToast("กรุณาระบุวันที่", "warning");
+            return;
+        }
+
+        if (!items.length) {
+            showToast("กรุณาเพิ่มรายการอย่างน้อย 1 รายการ", "warning");
+            return;
+        }
+
+        try {
+            setModalBusy(true);
+
+            var response = await apiRequest(
+                "savedocument",
+                {
+                    id: record ? record.id : "",
+                    data: data,
+                    items: items
+                },
+                {
+                    includeToken: true
+                }
             );
 
-        const taxElement =
-            byId(
-                'field-taxRate'
+            if (!responseSuccess(response)) {
+                throw createError(
+                    extractMessage(response),
+                    0,
+                    "SAVE_DOCUMENT_FAILED",
+                    response
+                );
+            }
+
+            closeModal();
+            showToast("บันทึกเอกสารเรียบร้อยแล้ว", "success");
+
+            await renderDocumentsPage();
+        } catch (error) {
+            showToast(
+                error.message || "ไม่สามารถบันทึกเอกสารได้",
+                "error"
             );
+        } finally {
+            setModalBusy(false);
+        }
+    }
 
-        const discount =
-            discountElement
-                ? parseNumber(
-                    discountElement.value
-                )
-                : 0;
+    function addDocumentItem() {
+        state.documentItems = readDocumentItems();
 
-        const taxRate =
-            taxElement
-                ? parseNumber(
-                    taxElement.value
-                )
-                : 7;
+        state.documentItems.push({
+            description: "",
+            quantity: 1,
+            unitPrice: 0,
+            total: 0
+        });
 
-        const totals =
-            calculateDocumentTotals(
-                items,
-                discount,
-                taxRate
-            );
+        renderDocumentItems();
+    }
 
-        const container =
-            byId(
-                'documentTotals'
-            );
+    function removeDocumentItem(index) {
+        state.documentItems = readDocumentItems();
+
+        if (state.documentItems.length <= 1) {
+            showToast("ต้องมีรายการอย่างน้อย 1 รายการ", "warning");
+            return;
+        }
+
+        state.documentItems.splice(index, 1);
+
+        renderDocumentItems();
+    }
+
+    function renderDocumentItems() {
+        var container = byId("documentItemsContainer");
 
         if (!container) {
             return;
         }
 
-        container.innerHTML =
-            '<div class="total-row">' +
-            '<span>รวมก่อนส่วนลด</span>' +
-            '<strong>' +
-            escapeHtml(
-                formatMoney(
-                    totals.subtotal
-                )
-            ) +
-            ' บาท</strong>' +
-            '</div>' +
-            '<div class="total-row">' +
-            '<span>ส่วนลด</span>' +
-            '<strong>' +
-            escapeHtml(
-                formatMoney(
-                    totals.discount
-                )
-            ) +
-            ' บาท</strong>' +
-            '</div>' +
-            '<div class="total-row">' +
-            '<span>ภาษี ' +
-            escapeHtml(
-                formatNumber(
-                    taxRate
-                )
-            ) +
-            '%</span>' +
-            '<strong>' +
-            escapeHtml(
-                formatMoney(
-                    totals.taxAmount
-                )
-            ) +
-            ' บาท</strong>' +
-            '</div>' +
-            '<div class="total-row grand-total">' +
-            '<span>ยอดรวมสุทธิ</span>' +
-            '<strong>' +
-            escapeHtml(
-                formatMoney(
-                    totals.total
-                )
-            ) +
-            ' บาท</strong>' +
-            '</div>';
-    }
+        container.innerHTML = "";
 
-    function addDocumentItem() {
-        state.currentDocumentItems.push(
-            {
-                id:
-                    generateId(),
-                description:
-                    '',
-                quantity:
-                    1,
-                unit:
-                    '',
-                unitPrice:
-                    0,
-                amount:
-                    0
-            }
-        );
-
-        renderDocumentItemsRows();
-    }
-
-    function removeDocumentItem(index) {
-        const numericIndex =
-            parseInt(
-                index,
-                10
+        state.documentItems.forEach(function (item, index) {
+            container.insertAdjacentHTML(
+                "beforeend",
+                buildDocumentItemRow(item, index)
             );
-
-        if (
-            Number.isNaN(
-                numericIndex
-            )
-        ) {
-            return;
-        }
-
-        state.currentDocumentItems.splice(
-            numericIndex,
-            1
-        );
-
-        renderDocumentItemsRows();
-    }
-
-    function updateDocumentItemInput(
-        element
-    ) {
-        const row =
-            element.closest(
-                '.document-item-row'
-            );
-
-        if (!row) {
-            return;
-        }
-
-        const index =
-            parseInt(
-                row.getAttribute(
-                    'data-item-index'
-                ),
-                10
-            );
-
-        if (
-            Number.isNaN(
-                index
-            )
-        ) {
-            return;
-        }
-
-        const item =
-            state.currentDocumentItems[
-                index
-            ] || {};
-
-        const field =
-            element.getAttribute(
-                'data-item-field'
-            );
-
-        if (!field) {
-            return;
-        }
-
-        if (
-            field === 'quantity' ||
-            field === 'unitPrice'
-        ) {
-            item[field] =
-                parseNumber(
-                    element.value
-                );
-        } else {
-            item[field] =
-                element.value;
-        }
-
-        item.amount =
-            (
-                parseNumber(
-                    item.quantity
-                ) || 1
-            ) *
-            parseNumber(
-                item.unitPrice
-            );
-
-        const totalElement =
-            row.querySelector(
-                '.item-line-total'
-            );
-
-        if (totalElement) {
-            totalElement.value =
-                formatMoney(
-                    item.amount
-                );
-        }
-
-        updateDocumentTotalsFromEditor();
-    }
-
-    async function viewDocument(id) {
-        try {
-            setLoading(
-                true,
-                'กำลังโหลดเอกสาร...'
-            );
-
-            const response =
-                await apiRequest(
-                    'getDocumentWithItems',
-                    {
-                        id: id
-                    }
-                );
-
-            const data =
-                unwrapResponse(
-                    response
-                );
-
-            openDocumentViewModal(
-                data
-            );
-        } catch (error) {
-            showToast(
-                error.message ||
-                'ไม่สามารถโหลดเอกสารได้',
-                'error'
-            );
-        } finally {
-            setLoading(false);
-        }
-    }
-
-    function openDocumentViewModal(data) {
-        const row =
-            data || {};
-
-        const items =
-            normalizeArray(
-                row.items ||
-                row.documentItems
-            );
-
-        let itemHtml =
-            '<table class="data-table">' +
-            '<thead>' +
-            '<tr>' +
-            '<th>รายการ</th>' +
-            '<th>จำนวน</th>' +
-            '<th>หน่วย</th>' +
-            '<th class="text-right">ราคา/หน่วย</th>' +
-            '<th class="text-right">รวม</th>' +
-            '</tr>' +
-            '</thead><tbody>';
-
-        items.forEach(
-            function (item) {
-                itemHtml +=
-                    '<tr>' +
-                    '<td>' +
-                    escapeHtml(
-                        item.description ||
-                        item.name ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        formatNumber(
-                            item.quantity
-                        )
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        item.unit ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td class="text-right">' +
-                    escapeHtml(
-                        formatMoney(
-                            item.unitPrice
-                        )
-                    ) +
-                    '</td>' +
-                    '<td class="text-right">' +
-                    escapeHtml(
-                        formatMoney(
-                            item.amount ||
-                            (
-                                parseNumber(
-                                    item.quantity
-                                ) *
-                                parseNumber(
-                                    item.unitPrice
-                                )
-                            )
-                        )
-                    ) +
-                    '</td>' +
-                    '</tr>';
-            }
-        );
-
-        itemHtml +=
-            '</tbody></table>';
-
-        openModal({
-            title:
-                getDocumentTypeName(
-                    row.docType ||
-                    row.documentType
-                ) +
-                ' ' +
-                (
-                    row.docNo ||
-                    row.documentNo ||
-                    ''
-                ),
-            subtitle:
-                'รายละเอียดเอกสาร',
-            fields: [
-                {
-                    name: 'view',
-                    label: 'ข้อมูล',
-                    type: 'textarea',
-                    value:
-                        '',
-                    readonly: true,
-                    help:
-                        'ดูรายละเอียดเพิ่มเติมจากรายการด้านล่าง'
-                }
-            ],
-            submitLabel:
-                'ปิด',
-            afterOpen:
-                function (container) {
-                    const body =
-                        container.querySelector(
-                            '.modal-body'
-                        );
-
-                    if (!body) {
-                        return;
-                    }
-
-                    body.innerHTML =
-                        '<div class="document-preview">' +
-                        '<div class="document-meta-grid">' +
-                        '<div><span>ประเภท</span><strong>' +
-                        escapeHtml(
-                            getDocumentTypeName(
-                                row.docType ||
-                                row.documentType
-                            )
-                        ) +
-                        '</strong></div>' +
-                        '<div><span>เลขที่</span><strong>' +
-                        escapeHtml(
-                            row.docNo ||
-                            row.documentNo ||
-                            '-'
-                        ) +
-                        '</strong></div>' +
-                        '<div><span>วันที่</span><strong>' +
-                        escapeHtml(
-                            formatDate(
-                                row.date
-                            )
-                        ) +
-                        '</strong></div>' +
-                        '<div><span>ครบกำหนด</span><strong>' +
-                        escapeHtml(
-                            formatDate(
-                                row.dueDate
-                            )
-                        ) +
-                        '</strong></div>' +
-                        '<div><span>คู่ค้า</span><strong>' +
-                        escapeHtml(
-                            row.partyName ||
-                            row.customerName ||
-                            row.vendorName ||
-                            '-'
-                        ) +
-                        '</strong></div>' +
-                        '<div><span>เลขภาษี</span><strong>' +
-                        escapeHtml(
-                            row.taxId ||
-                            '-'
-                        ) +
-                        '</strong></div>' +
-                        '</div>' +
-                        '<div class="document-items-preview">' +
-                        itemHtml +
-                        '</div>' +
-                        '<div class="document-total-preview">' +
-                        '<div><span>รวมก่อนส่วนลด</span><strong>' +
-                        escapeHtml(
-                            formatMoney(
-                                row.subtotal
-                            )
-                        ) +
-                        ' บาท</strong></div>' +
-                        '<div><span>ส่วนลด</span><strong>' +
-                        escapeHtml(
-                            formatMoney(
-                                row.discount
-                            )
-                        ) +
-                        ' บาท</strong></div>' +
-                        '<div><span>ภาษี</span><strong>' +
-                        escapeHtml(
-                            formatMoney(
-                                row.taxAmount
-                            )
-                        ) +
-                        ' บาท</strong></div>' +
-                        '<div class="grand"><span>ยอดรวม</span><strong>' +
-                        escapeHtml(
-                            formatMoney(
-                                row.total ||
-                                row.grandTotal
-                            )
-                        ) +
-                        ' บาท</strong></div>' +
-                        '</div>' +
-                        '</div>';
-                },
-            onSubmit:
-                async function () {
-                    closeModal();
-                }
         });
 
-        const submitButton =
-            byId(
-                'modalSubmitButton'
-            );
-
-        if (submitButton) {
-            submitButton.textContent =
-                'ปิด';
-        }
+        updateDocumentTotals();
     }
 
     async function cancelDocument(id) {
-        const confirmed =
-            await confirmAction(
-                'ยืนยันยกเลิกเอกสารนี้หรือไม่?'
-            );
+        if (!id) {
+            return;
+        }
 
-        if (!confirmed) {
+        if (!confirmAction("ยืนยันยกเลิกเอกสารรายการนี้หรือไม่")) {
             return;
         }
 
         try {
-            setLoading(
-                true,
-                'กำลังยกเลิกเอกสาร...'
-            );
-
-            await apiRequest(
-                'cancelDocument',
+            var response = await apiRequest(
+                "cancelDocument",
                 {
                     id: id
-                }
-            );
-
-            showToast(
-                'ยกเลิกเอกสารสำเร็จ',
-                'success'
-            );
-
-            await loadEntityRows(
-                'documents',
-                state.currentPageNumber
-            );
-        } catch (error) {
-            showToast(
-                error.message ||
-                'ไม่สามารถยกเลิกเอกสารได้',
-                'error'
-            );
-        } finally {
-            setLoading(false);
-        }
-    }
-
-    async function cancelTransaction(
-        entity,
-        id
-    ) {
-        const confirmed =
-            await confirmAction(
-                'ยืนยันยกเลิกรายการนี้หรือไม่?'
-            );
-
-        if (!confirmed) {
-            return;
-        }
-
-        let action = '';
-
-        if (entity === 'income') {
-            action =
-                'cancelIncome';
-        } else if (entity === 'expense') {
-            action =
-                'cancelExpense';
-        }
-
-        if (!action) {
-            await deleteEntity(
-                entity,
-                id
-            );
-
-            return;
-        }
-
-        try {
-            setLoading(
-                true,
-                'กำลังยกเลิกรายการ...'
-            );
-
-            await apiRequest(
-                action,
-                {
-                    id: id
-                }
-            );
-
-            showToast(
-                'ยกเลิกรายการสำเร็จ',
-                'success'
-            );
-
-            await loadEntityRows(
-                entity,
-                state.currentPageNumber
-            );
-        } catch (error) {
-            showToast(
-                error.message ||
-                'ไม่สามารถยกเลิกรายการได้',
-                'error'
-            );
-        } finally {
-            setLoading(false);
-        }
-    }
-
-    async function renderReportsPage() {
-        const container =
-            getPageContainer(
-                'reports'
-            );
-
-        container.innerHTML =
-            '<section class="reports-page">' +
-            '<div class="page-toolbar">' +
-            '<div>' +
-            '<h2>รายงาน</h2>' +
-            '<p>สรุปข้อมูลทางการเงินตามช่วงเวลา</p>' +
-            '</div>' +
-            '</div>' +
-            '<div class="card filter-card">' +
-            '<div class="filter-grid">' +
-            '<div class="form-group">' +
-            '<label>ประเภทรายงาน</label>' +
-            '<select id="reportType">' +
-            '<option value="income_expense">รายรับ - รายจ่าย</option>' +
-            '<option value="cash_bank">เงินสด / ธนาคาร</option>' +
-            '<option value="transactions">รายการทั้งหมด</option>' +
-            '<option value="documents">ทะเบียนเอกสาร</option>' +
-            '</select>' +
-            '</div>' +
-            '<div class="form-group">' +
-            '<label>วันที่เริ่มต้น</label>' +
-            '<input type="date" id="reportDateFrom" value="' +
-            escapeHtml(
-                toInputDate(
-                    new Date(
-                        new Date().getFullYear(),
-                        new Date().getMonth(),
-                        1
-                    )
-                )
-            ) +
-            '">' +
-            '</div>' +
-            '<div class="form-group">' +
-            '<label>วันที่สิ้นสุด</label>' +
-            '<input type="date" id="reportDateTo" value="' +
-            escapeHtml(
-                toInputDate(
-                    new Date()
-                )
-            ) +
-            '">' +
-            '</div>' +
-            '<div class="form-group filter-actions">' +
-            '<button type="button" class="btn btn-primary" data-action="run-report">สร้างรายงาน</button>' +
-            '<button type="button" class="btn btn-secondary" data-action="export-report">Excel</button>' +
-            '</div>' +
-            '</div>' +
-            '</div>' +
-            '<div id="reportSummary" class="dashboard-cards"></div>' +
-            '<div class="card">' +
-            '<div class="card-header">' +
-            '<h3>ผลรายงาน</h3>' +
-            '</div>' +
-            '<div id="reportTableContainer" class="table-responsive">' +
-            '<div class="empty-state">เลือกช่วงเวลาแล้วกด “สร้างรายงาน”</div>' +
-            '</div>' +
-            '</div>' +
-            '</section>';
-
-        await runReport();
-    }
-
-    async function runReport() {
-        const reportTypeElement =
-            byId('reportType');
-
-        const dateFromElement =
-            byId('reportDateFrom');
-
-        const dateToElement =
-            byId('reportDateTo');
-
-        if (
-            !reportTypeElement ||
-            !dateFromElement ||
-            !dateToElement
-        ) {
-            return;
-        }
-
-        const reportType =
-            reportTypeElement.value;
-
-        const dateFrom =
-            dateFromElement.value;
-
-        const dateTo =
-            dateToElement.value;
-
-        try {
-            setLoading(
-                true,
-                'กำลังสร้างรายงาน...'
-            );
-
-            const response =
-                await apiRequest(
-                    'report',
-                    {
-                        reportType:
-                            reportType,
-                        dateFrom:
-                            dateFrom,
-                        dateTo:
-                            dateTo
-                    }
-                );
-
-            const data =
-                unwrapResponse(
-                    response
-                ) ||
-                {};
-
-            state.reportData =
-                data;
-
-            renderReportResult(
-                data
-            );
-        } catch (error) {
-            showToast(
-                error.message ||
-                'ไม่สามารถสร้างรายงานได้',
-                'error'
-            );
-        } finally {
-            setLoading(false);
-        }
-    }
-
-    function renderReportResult(data) {
-        const rows =
-            normalizeArray(
-                data.rows ||
-                data.items ||
-                data.records ||
-                data.data
-            );
-
-        const summary =
-            data.summary ||
-            {};
-
-        const summaryContainer =
-            byId(
-                'reportSummary'
-            );
-
-        if (summaryContainer) {
-            summaryContainer.innerHTML =
-                createStatCard(
-                    'รายรับ',
-                    'reportIncome',
-                    formatMoney(
-                        summary.income ||
-                        data.income ||
-                        0
-                    )
-                ) +
-                createStatCard(
-                    'รายจ่าย',
-                    'reportExpense',
-                    formatMoney(
-                        summary.expense ||
-                        data.expense ||
-                        0
-                    )
-                ) +
-                createStatCard(
-                    'สุทธิ',
-                    'reportNet',
-                    formatMoney(
-                        summary.net ||
-                        data.net ||
-                        0
-                    )
-                );
-        }
-
-        const tableContainer =
-            byId(
-                'reportTableContainer'
-            );
-
-        if (!tableContainer) {
-            return;
-        }
-
-        if (!rows.length) {
-            tableContainer.innerHTML =
-                '<div class="empty-state">ไม่พบข้อมูลในช่วงเวลาที่เลือก</div>';
-
-            return;
-        }
-
-        tableContainer.innerHTML =
-            renderGenericTable(
-                rows,
-                'reports'
-            );
-    }
-
-    async function renderSettingsPage() {
-        if (!isAdmin()) {
-            showToast(
-                'เฉพาะผู้ดูแลระบบเท่านั้น',
-                'warning'
-            );
-
-            return;
-        }
-
-        const container =
-            getPageContainer(
-                'settings'
-            );
-
-        let settings = [];
-
-        try {
-            const response =
-                await apiRequest(
-                    'settings',
-                    {}
-                );
-
-            const data =
-                unwrapResponse(
-                    response
-                );
-
-            settings =
-                normalizeArray(
-                    data
-                );
-
-            if (!settings.length) {
-                settings =
-                    Object.keys(
-                        state.settings
-                    ).map(
-                        function (key) {
-                            const value =
-                                state.settings[
-                                    key
-                                ];
-
-                            if (
-                                value &&
-                                typeof value ===
-                                'object'
-                            ) {
-                                return {
-                                    key:
-                                        key,
-                                    value:
-                                        value.value ||
-                                        '',
-                                    description:
-                                        value.description ||
-                                        ''
-                                };
-                            }
-
-                            return {
-                                key:
-                                    key,
-                                value:
-                                    value,
-                                description:
-                                    ''
-                            };
-                        }
-                    );
-            }
-        } catch (error) {
-            settings =
-                Object.keys(
-                    state.settings
-                ).map(
-                    function (key) {
-                        return {
-                            key:
-                                key,
-                            value:
-                                state.settings[
-                                    key
-                                ],
-                            description:
-                                ''
-                        };
-                    }
-                );
-        }
-
-        let rowsHtml = '';
-
-        settings.forEach(
-            function (setting) {
-                rowsHtml +=
-                    '<tr>' +
-                    '<td>' +
-                    escapeHtml(
-                        setting.key ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        setting.value ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        setting.description ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td class="text-center">' +
-                    '<button type="button" class="btn-icon" data-action="edit-setting" data-key="' +
-                    escapeHtml(
-                        setting.key ||
-                        ''
-                    ) +
-                    '">✎</button>' +
-                    '</td>' +
-                    '</tr>';
-            }
-        );
-
-        container.innerHTML =
-            '<section class="settings-page">' +
-            '<div class="page-toolbar">' +
-            '<div>' +
-            '<h2>ตั้งค่ากิจการ</h2>' +
-            '<p>ข้อมูลและค่าการทำงานของระบบ</p>' +
-            '</div>' +
-            '<div class="toolbar-actions">' +
-            '<button type="button" class="btn btn-primary" data-action="create-setting">＋ เพิ่มการตั้งค่า</button>' +
-            '</div>' +
-            '</div>' +
-            '<div class="card">' +
-            '<div class="card-body no-padding">' +
-            '<div class="table-responsive">' +
-            '<table class="data-table">' +
-            '<thead>' +
-            '<tr>' +
-            '<th>Key</th>' +
-            '<th>Value</th>' +
-            '<th>รายละเอียด</th>' +
-            '<th>จัดการ</th>' +
-            '</tr>' +
-            '</thead>' +
-            '<tbody>' +
-            rowsHtml +
-            '</tbody>' +
-            '</table>' +
-            '</div>' +
-            '</div>' +
-            '</div>' +
-            '</section>';
-    }
-
-    function openSettingModal(key) {
-        const existing =
-            key
-                ? (
-                    state.settings[
-                        key
-                    ] || {}
-                )
-                : {};
-
-        const currentValue =
-            existing &&
-            typeof existing ===
-            'object'
-                ? existing.value ||
-                  ''
-                : existing;
-
-        const currentDescription =
-            existing &&
-            typeof existing ===
-            'object'
-                ? existing.description ||
-                  ''
-                : '';
-
-        openModal({
-            title:
-                key
-                    ? 'แก้ไขการตั้งค่า'
-                    : 'เพิ่มการตั้งค่า',
-            fields: [
-                {
-                    name: 'key',
-                    label: 'Key',
-                    type: 'text',
-                    value:
-                        key ||
-                        '',
-                    required: true,
-                    readonly:
-                        !!key
                 },
                 {
-                    name: 'value',
-                    label: 'Value',
-                    type: 'text',
-                    value:
-                        currentValue ||
-                        ''
-                },
-                {
-                    name: 'description',
-                    label: 'รายละเอียด',
-                    type: 'textarea',
-                    value:
-                        currentDescription ||
-                        ''
+                    includeToken: true
                 }
-            ],
-            submitLabel:
-                'บันทึกการตั้งค่า',
-            onSubmit:
-                async function (
-                    values
-                ) {
-                    await apiRequest(
-                        'updatesetting',
-                        {
-                            key:
-                                values.key,
-                            value:
-                                values.value,
-                            description:
-                                values.description
-                        }
-                    );
-
-                    showToast(
-                        'บันทึกการตั้งค่าสำเร็จ',
-                        'success'
-                    );
-
-                    await loadBootstrap();
-
-                    await renderSettingsPage();
-                }
-        });
-    }
-
-    async function renderAuditLogsPage() {
-        if (!isAdmin()) {
-            showToast(
-                'เฉพาะผู้ดูแลระบบเท่านั้น',
-                'warning'
             );
 
+            if (!responseSuccess(response)) {
+                throw createError(
+                    extractMessage(response),
+                    0,
+                    "CANCEL_DOCUMENT_FAILED",
+                    response
+                );
+            }
+
+            showToast("ยกเลิกเอกสารเรียบร้อยแล้ว", "success");
+
+            await renderDocumentsPage();
+        } catch (error) {
+            showToast(
+                error.message || "ไม่สามารถยกเลิกเอกสารได้",
+                "error"
+            );
+        }
+    }
+
+    async function deleteRecord(entity, id, refreshFunction) {
+        if (!id) {
             return;
         }
 
-        const container =
-            getPageContainer(
-                'auditlogs'
-            );
-
-        container.innerHTML =
-            '<section class="auditlogs-page">' +
-            '<div class="page-toolbar">' +
-            '<div>' +
-            '<h2>Audit Log</h2>' +
-            '<p>ประวัติการทำรายการของผู้ใช้งาน</p>' +
-            '</div>' +
-            '<div class="toolbar-actions">' +
-            '<button type="button" class="btn btn-secondary" data-action="refresh-auditlogs">รีเฟรช</button>' +
-            '</div>' +
-            '</div>' +
-            '<div class="card filter-card">' +
-            '<div class="filter-grid">' +
-            '<div class="form-group">' +
-            '<label>วันที่เริ่มต้น</label>' +
-            '<input type="date" id="auditDateFrom">' +
-            '</div>' +
-            '<div class="form-group">' +
-            '<label>วันที่สิ้นสุด</label>' +
-            '<input type="date" id="auditDateTo">' +
-            '</div>' +
-            '<div class="form-group">' +
-            '<label>ค้นหา</label>' +
-            '<input type="search" id="auditSearch" placeholder="ผู้ใช้ / Action / รายละเอียด">' +
-            '</div>' +
-            '<div class="form-group filter-actions">' +
-            '<button type="button" class="btn btn-primary" data-action="load-auditlogs">ค้นหา</button>' +
-            '</div>' +
-            '</div>' +
-            '</div>' +
-            '<div class="card">' +
-            '<div id="auditLogsContainer" class="table-responsive">' +
-            '<div class="loading-state">กำลังโหลด...</div>' +
-            '</div>' +
-            '</div>' +
-            '</section>';
-
-        await loadAuditLogs();
-    }
-
-    async function loadAuditLogs() {
-        const container =
-            byId(
-                'auditLogsContainer'
-            );
-
-        if (container) {
-            container.innerHTML =
-                '<div class="loading-state">กำลังโหลด Audit Log...</div>';
+        if (!confirmAction("ยืนยันลบข้อมูลรายการนี้หรือไม่")) {
+            return;
         }
 
         try {
-            const response =
-                await apiRequest(
-                    'auditlogs',
-                    {
-                        dateFrom:
-                            byId(
-                                'auditDateFrom'
-                            )
-                                ? byId(
-                                    'auditDateFrom'
-                                ).value
-                                : '',
-                        dateTo:
-                            byId(
-                                'auditDateTo'
-                            )
-                                ? byId(
-                                    'auditDateTo'
-                                ).value
-                                : '',
-                        search:
-                            byId(
-                                'auditSearch'
-                            )
-                                ? byId(
-                                    'auditSearch'
-                                ).value.trim()
-                                : ''
-                    }
-                );
+            await deleteEntity(entity, id);
 
-            const data =
-                unwrapResponse(
-                    response
-                );
+            showToast("ลบข้อมูลเรียบร้อยแล้ว", "success");
 
-            const rows =
-                normalizeArray(
-                    data
-                );
-
-            if (!container) {
-                return;
+            if (typeof refreshFunction === "function") {
+                await refreshFunction();
             }
-
-            if (!rows.length) {
-                container.innerHTML =
-                    '<div class="empty-state">ไม่พบ Audit Log</div>';
-
-                return;
-            }
-
-            let html =
-                '<table class="data-table">' +
-                '<thead>' +
-                '<tr>' +
-                '<th>เวลา</th>' +
-                '<th>ผู้ใช้</th>' +
-                '<th>Action</th>' +
-                '<th>Entity</th>' +
-                '<th>รายละเอียด</th>' +
-                '<th>IP</th>' +
-                '</tr>' +
-                '</thead><tbody>';
-
-            rows.forEach(
-                function (row) {
-                    html +=
-                        '<tr>' +
-                        '<td>' +
-                        escapeHtml(
-                            formatDateTime(
-                                row.createdAt ||
-                                row.timestamp ||
-                                row.time
-                            )
-                        ) +
-                        '</td>' +
-                        '<td>' +
-                        escapeHtml(
-                            row.username ||
-                            row.user ||
-                            ''
-                        ) +
-                        '</td>' +
-                        '<td>' +
-                        escapeHtml(
-                            row.action ||
-                            ''
-                        ) +
-                        '</td>' +
-                        '<td>' +
-                        escapeHtml(
-                            row.entity ||
-                            ''
-                        ) +
-                        '</td>' +
-                        '<td>' +
-                        escapeHtml(
-                            row.description ||
-                            row.details ||
-                            row.message ||
-                            ''
-                        ) +
-                        '</td>' +
-                        '<td>' +
-                        escapeHtml(
-                            row.ip ||
-                            ''
-                        ) +
-                        '</td>' +
-                        '</tr>';
-                }
-            );
-
-            html +=
-                '</tbody></table>';
-
-            container.innerHTML =
-                html;
         } catch (error) {
-            if (container) {
-                container.innerHTML =
-                    '<div class="empty-state error-state">' +
-                    escapeHtml(
-                        error.message ||
-                        'ไม่สามารถโหลด Audit Log ได้'
-                    ) +
-                    '</div>';
+            showToast(
+                error.message || "ไม่สามารถลบข้อมูลได้",
+                "error"
+            );
+        }
+    }
+
+    async function searchEntity(entity, keyword, renderFunction) {
+        var filters = {};
+
+        if (keyword) {
+            filters.search = keyword;
+            filters.keyword = keyword;
+        }
+
+        try {
+            var rows = await listEntity(entity, filters);
+
+            state.currentEntity = entity;
+            state.currentData = rows;
+
+            if (typeof renderFunction === "function") {
+                renderFunction(rows);
             }
+        } catch (error) {
+            showToast(
+                error.message || "ค้นหาข้อมูลไม่สำเร็จ",
+                "error"
+            );
         }
     }
 
-    async function exportCurrentEntity(
-        entity
-    ) {
-        if (
-            !state.currentRows ||
-            !state.currentRows.length
-        ) {
-            showToast(
-                'ไม่มีข้อมูลสำหรับส่งออก',
-                'warning'
-            );
-
-            return;
-        }
-
-        const rows =
-            state.currentRows;
-
-        const filename =
-            entity +
-            '_' +
-            formatFileDate(
-                new Date()
-            );
-
-        await exportXlsx(
-            rows,
-            filename
+    function getSearchKeyword(action) {
+        var input = qs(
+            '[data-search-input="' +
+            escapeAttribute(action) +
+            '"]'
         );
+
+        if (!input) {
+            input = qs("input[data-search-input]");
+        }
+
+        return input ? input.value.trim() : "";
     }
 
-    async function exportReport() {
-        if (
-            !state.reportData
-        ) {
-            showToast(
-                'กรุณาสร้างรายงานก่อน',
-                'warning'
-            );
+    async function exportCurrentRows(rows, filename, title) {
+        var data = Array.isArray(rows) ? rows : [];
 
+        if (!data.length) {
+            showToast("ไม่มีข้อมูลสำหรับส่งออก", "warning");
             return;
         }
 
-        const rows =
-            normalizeArray(
-                state.reportData.rows ||
-                state.reportData.items ||
-                state.reportData.records ||
-                state.reportData.data
-            );
-
-        if (!rows.length) {
-            showToast(
-                'รายงานไม่มีข้อมูล',
-                'warning'
-            );
-
-            return;
-        }
-
-        await exportXlsx(
-            rows,
-            'report_' +
-            formatFileDate(
-                new Date()
-            )
-        );
-    }
-
-    async function exportXlsx(
-        rows,
-        filename
-    ) {
         if (
-            window.XLSX
+            window.XLSX &&
+            window.XLSX.utils &&
+            typeof window.XLSX.writeFile === "function"
         ) {
             try {
-                const workbook =
-                    window.XLSX.utils.book_new();
-
-                const worksheet =
-                    window.XLSX.utils.json_to_sheet(
-                        rows
-                    );
+                var worksheet = window.XLSX.utils.json_to_sheet(data);
+                var workbook = window.XLSX.utils.book_new();
 
                 window.XLSX.utils.book_append_sheet(
                     workbook,
                     worksheet,
-                    'ข้อมูล'
+                    "Data"
                 );
 
                 window.XLSX.writeFile(
                     workbook,
-                    filename +
-                    '.xlsx'
+                    filename || "export.xlsx"
                 );
 
-                showToast(
-                    'ส่งออก Excel สำเร็จ',
-                    'success'
-                );
+                showToast("ส่งออก Excel เรียบร้อยแล้ว", "success");
 
                 return;
             } catch (error) {
-                console.error(
-                    'XLSX ERROR:',
-                    error
-                );
+                console.error("XLSX ERROR", error);
             }
         }
 
-        const csv =
-            convertRowsToCsv(
-                rows
-            );
-
-        downloadBlob(
-            csv,
-            filename +
-            '.csv',
-            'text/csv;charset=utf-8'
+        exportCsv(
+            data,
+            String(filename || "export.xlsx").replace(
+                /\.xlsx$/i,
+                ".csv"
+            )
         );
 
         showToast(
-            'ไม่พบไลบรารี Excel จึงส่งออกเป็น CSV แทน',
-            'warning',
-            6000
+            "ไม่พบไลบรารี XLSX จึงส่งออกเป็น CSV แทน",
+            "warning"
         );
     }
 
-    function convertRowsToCsv(rows) {
-        if (!rows.length) {
-            return '';
+    function exportCsv(rows, filename) {
+        var data = Array.isArray(rows) ? rows : [];
+
+        if (!data.length) {
+            return;
         }
 
-        const keys =
-            getUsefulObjectKeys(
-                rows
-            );
-
-        const lines = [];
+        var keys = Object.keys(data[0]);
+        var lines = [];
 
         lines.push(
-            keys.map(
-                function (key) {
-                    return csvEscape(
-                        prettifyKey(
-                            key
-                        )
-                    );
-                }
-            ).join(',')
+            keys.map(function (key) {
+                return csvEscape(key);
+            }).join(",")
         );
 
-        rows.forEach(
-            function (row) {
-                lines.push(
-                    keys.map(
-                        function (key) {
-                            return csvEscape(
-                                displayValue(
-                                    row[key]
-                                )
-                            );
-                        }
-                    ).join(',')
-                );
+        data.forEach(function (row) {
+            lines.push(
+                keys.map(function (key) {
+                    return csvEscape(row[key]);
+                }).join(",")
+            );
+        });
+
+        var blob = new Blob(
+            [
+                "\ufeff" +
+                lines.join("\r\n")
+            ],
+            {
+                type: "text/csv;charset=utf-8"
             }
         );
 
-        return '\uFEFF' +
-            lines.join('\r\n');
+        downloadBlob(
+            blob,
+            filename || "export.csv"
+        );
     }
 
     function csvEscape(value) {
-        const text =
-            String(
-                value === null ||
-                value === undefined
-                    ? ''
-                    : value
-            );
-
-        if (
-            text.indexOf('"') !== -1 ||
-            text.indexOf(',') !== -1 ||
-            text.indexOf('\n') !== -1 ||
-            text.indexOf('\r') !== -1
-        ) {
-            return '"' +
-                text.replace(
-                    /"/g,
-                    '""'
-                ) +
-                '"';
+        if (value === null || value === undefined) {
+            return '""';
         }
 
-        return text;
+        var text = String(value)
+            .replace(/"/g, '""');
+
+        return '"' + text + '"';
     }
 
-    function downloadBlob(
-        content,
-        filename,
-        mimeType
-    ) {
-        const blob =
-            content instanceof Blob
-                ? content
-                : new Blob(
-                    [content],
-                    {
-                        type:
-                            mimeType ||
-                            'application/octet-stream'
-                    }
-                );
+    function downloadBlob(blob, filename) {
+        var url = URL.createObjectURL(blob);
+        var link = document.createElement("a");
 
-        const url =
-            URL.createObjectURL(
-                blob
-            );
+        link.href = url;
+        link.download = filename || "download";
+        link.style.display = "none";
 
-        const anchor =
-            document.createElement(
-                'a'
-            );
+        document.body.appendChild(link);
+        link.click();
 
-        anchor.href =
-            url;
+        setTimeout(function () {
+            if (link.parentNode) {
+                link.parentNode.removeChild(link);
+            }
 
-        anchor.download =
-            filename;
+            URL.revokeObjectURL(url);
+        }, 100);
+    }
 
-        document.body.appendChild(
-            anchor
+    function createPrintDocument(title, contentHtml) {
+        var printWindow = window.open(
+            "",
+            "_blank",
+            "width=1000,height=800"
         );
 
-        anchor.click();
+        if (!printWindow) {
+            showToast(
+                "เบราว์เซอร์บล็อกหน้าต่างพิมพ์ กรุณาอนุญาต Pop-up",
+                "warning"
+            );
 
-        window.setTimeout(
-            function () {
-                document.body.removeChild(
-                    anchor
-                );
+            return;
+        }
 
-                URL.revokeObjectURL(
-                    url
-                );
-            },
-            100
+        var html =
+            "<!DOCTYPE html>" +
+            '<html lang="th">' +
+            "<head>" +
+            '<meta charset="UTF-8">' +
+            "<title>" +
+            escapeHtml(title) +
+            "</title>" +
+            "<style>" +
+            "body{font-family:'TH Sarabun New','TH Sarabun',Tahoma,sans-serif;padding:30px;color:#111;font-size:18px;}" +
+            "h1,h2,h3{margin-top:0;}" +
+            "table{width:100%;border-collapse:collapse;margin-top:20px;}" +
+            "th,td{border:1px solid #333;padding:7px;text-align:left;}" +
+            ".text-right{text-align:right;}" +
+            ".print-header{text-align:center;margin-bottom:20px;}" +
+            ".print-footer{margin-top:30px;text-align:right;}" +
+            "@media print{body{padding:10mm;}button{display:none!important;}}" +
+            "</style>" +
+            "</head>" +
+            "<body>" +
+            contentHtml +
+            "</body>" +
+            "</html>";
+
+        printWindow.document.open();
+        printWindow.document.write(html);
+        printWindow.document.close();
+
+        setTimeout(function () {
+            printWindow.focus();
+            printWindow.print();
+        }, 500);
+    }
+
+    function printReport() {
+        var container = byId("reportResultContainer");
+
+        if (!container) {
+            showToast("ยังไม่มีรายงานให้พิมพ์", "warning");
+            return;
+        }
+
+        createPrintDocument(
+            "รายงาน " + CONFIG.APP_NAME,
+            '<div class="print-header">' +
+            "<h1>รายงาน</h1>" +
+            "<p>" +
+            escapeHtml(
+                getValueById("reportType") ||
+                "รายงานทางการเงิน"
+            ) +
+            "</p>" +
+            "</div>" +
+            container.innerHTML
         );
     }
 
-    function formatFileDate(date) {
-        const year =
-            date.getFullYear();
+    function getValueById(id) {
+        var element = byId(id);
 
-        const month =
-            String(
-                date.getMonth() + 1
-            ).padStart(
-                2,
-                '0'
-            );
+        if (!element) {
+            return "";
+        }
 
-        const day =
-            String(
-                date.getDate()
-            ).padStart(
-                2,
-                '0'
-            );
+        return element.value || element.textContent || "";
+    }
 
-        return (
-            year +
-            month +
-            day
+    function exportReport() {
+        var rows = state.reportData;
+
+        if (rows && rows.rows) {
+            rows = rows.rows;
+        }
+
+        if (rows && rows.items) {
+            rows = rows.items;
+        }
+
+        rows = normalizeArray(rows);
+
+        exportCurrentRows(
+            rows,
+            "report_" + toInputDate() + ".xlsx",
+            "รายงาน"
         );
     }
 
-    async function downloadDocumentPdf(id) {
+    function exportPageData(filename) {
+        exportCurrentRows(
+            state.currentData,
+            filename || "export.xlsx",
+            PAGE_NAMES[state.currentPage] || "ข้อมูล"
+        );
+    }
+
+    async function nextDocumentNumber(docType) {
         try {
-            setLoading(
-                true,
-                'กำลังเตรียม PDF...'
+            var response = await apiRequest(
+                "nextdocumentnumber",
+                {
+                    docType: docType
+                },
+                {
+                    includeToken: true
+                }
             );
 
-            const response =
-                await apiRequest(
-                    'getDocumentWithItems',
+            if (!responseSuccess(response)) {
+                return "";
+            }
+
+            var data = normalizeResponse(response);
+
+            if (data.data !== undefined) {
+                data = parseMaybeJson(data.data);
+            }
+
+            if (data.result !== undefined) {
+                data = parseMaybeJson(data.result);
+            }
+
+            if (typeof data === "string") {
+                return data;
+            }
+
+            if (data.docNo) {
+                return String(data.docNo);
+            }
+
+            if (data.number) {
+                return String(data.number);
+            }
+
+            if (data.documentNumber) {
+                return String(data.documentNumber);
+            }
+
+            return "";
+        } catch (error) {
+            console.warn("DOCUMENT NUMBER ERROR", error);
+            return "";
+        }
+    }
+
+    function refreshPage() {
+        return navigate(
+            state.currentPage,
+            true
+        );
+    }
+
+    async function handleAction(action, element) {
+        var id = element ?
+            element.getAttribute("data-id") :
+            "";
+
+        if (action === "logout") {
+            await logout();
+            return;
+        }
+
+        if (action === "dashboard") {
+            await navigate("dashboard");
+            return;
+        }
+
+        if (PAGE_NAMES[action]) {
+            await navigate(action);
+            return;
+        }
+
+        if (action === "refresh-dashboard") {
+            await renderDashboard();
+            return;
+        }
+
+        if (action === "add-income") {
+            openIncomeModal(null);
+            return;
+        }
+
+        if (action === "edit-income") {
+            var incomeRecord = getRecordById(
+                state.currentData,
+                id
+            );
+
+            if (!incomeRecord) {
+                try {
+                    incomeRecord = await getEntity(
+                        "Income",
+                        id
+                    );
+                } catch (error) {
+                    showToast(
+                        error.message || "ไม่พบข้อมูลรายรับ",
+                        "error"
+                    );
+                    return;
+                }
+            }
+
+            openIncomeModal(incomeRecord);
+            return;
+        }
+
+        if (action === "delete-income") {
+            await deleteRecord(
+                "Income",
+                id,
+                function () {
+                    return renderIncomePage();
+                }
+            );
+            return;
+        }
+
+        if (action === "add-expense") {
+            openExpenseModal(null);
+            return;
+        }
+
+        if (action === "edit-expense") {
+            var expenseRecord = getRecordById(
+                state.currentData,
+                id
+            );
+
+            if (!expenseRecord) {
+                try {
+                    expenseRecord = await getEntity(
+                        "Expenses",
+                        id
+                    );
+                } catch (error) {
+                    showToast(
+                        error.message || "ไม่พบข้อมูลรายจ่าย",
+                        "error"
+                    );
+                    return;
+                }
+            }
+
+            openExpenseModal(expenseRecord);
+            return;
+        }
+
+        if (action === "delete-expense") {
+            await deleteRecord(
+                "Expenses",
+                id,
+                function () {
+                    return renderExpensePage();
+                }
+            );
+            return;
+        }
+
+        if (action === "add-transfer") {
+            openTransferModal(null);
+            return;
+        }
+
+        if (action === "edit-transfer") {
+            var transferRecord = getRecordById(
+                state.currentData,
+                id
+            );
+
+            if (!transferRecord) {
+                transferRecord = await getEntity(
+                    "Transfers",
+                    id
+                );
+            }
+
+            openTransferModal(transferRecord);
+            return;
+        }
+
+        if (action === "delete-transfer") {
+            await deleteRecord(
+                "Transfers",
+                id,
+                function () {
+                    return renderTransfersPage();
+                }
+            );
+            return;
+        }
+
+        if (action === "add-account") {
+            openAccountModal(null);
+            return;
+        }
+
+        if (action === "edit-account") {
+            var accountRecord = getRecordById(
+                state.currentData,
+                id
+            );
+
+            if (!accountRecord) {
+                accountRecord = await getEntity(
+                    "Accounts",
+                    id
+                );
+            }
+
+            openAccountModal(accountRecord);
+            return;
+        }
+
+        if (action === "delete-account") {
+            await deleteRecord(
+                "Accounts",
+                id,
+                function () {
+                    return renderAccountsPage();
+                }
+            );
+            return;
+        }
+
+        if (action === "add-customer") {
+            openCustomerModal(null);
+            return;
+        }
+
+        if (action === "edit-customer") {
+            var customerRecord = getRecordById(
+                state.currentData,
+                id
+            );
+
+            if (!customerRecord) {
+                customerRecord = await getEntity(
+                    "Customers",
+                    id
+                );
+            }
+
+            openCustomerModal(customerRecord);
+            return;
+        }
+
+        if (action === "delete-customer") {
+            await deleteRecord(
+                "Customers",
+                id,
+                function () {
+                    return renderCustomersPage();
+                }
+            );
+            return;
+        }
+
+        if (action === "add-vendor") {
+            openVendorModal(null);
+            return;
+        }
+
+        if (action === "edit-vendor") {
+            var vendorRecord = getRecordById(
+                state.currentData,
+                id
+            );
+
+            if (!vendorRecord) {
+                vendorRecord = await getEntity(
+                    "Vendors",
+                    id
+                );
+            }
+
+            openVendorModal(vendorRecord);
+            return;
+        }
+
+        if (action === "delete-vendor") {
+            await deleteRecord(
+                "Vendors",
+                id,
+                function () {
+                    return renderVendorsPage();
+                }
+            );
+            return;
+        }
+
+        if (action === "add-document") {
+            openDocumentModal(null);
+            return;
+        }
+
+        if (action === "edit-document") {
+            var documentRecord = getRecordById(
+                state.currentData,
+                id
+            );
+
+            try {
+                var detailResponse = await apiRequest(
+                    "getDocumentWithItems",
                     {
                         id: id
+                    },
+                    {
+                        includeToken: true
                     }
                 );
 
-            const data =
-                unwrapResponse(
-                    response
-                );
+                if (responseSuccess(detailResponse)) {
+                    var detailData = normalizeResponse(detailResponse);
 
-            if (
-                window.html2pdf
-            ) {
-                await generatePdfWithHtml2Pdf(
-                    data
-                );
+                    if (detailData.data !== undefined) {
+                        detailData = parseMaybeJson(detailData.data);
+                    }
 
-                showToast(
-                    'สร้าง PDF สำเร็จ',
-                    'success'
-                );
+                    if (detailData.result !== undefined) {
+                        detailData = parseMaybeJson(detailData.result);
+                    }
 
+                    if (detailData.document) {
+                        documentRecord = detailData.document;
+                    } else if (detailData.id || detailData.docNo) {
+                        documentRecord = detailData;
+                    }
+
+                    if (detailData.items) {
+                        documentRecord.items = normalizeArray(
+                            detailData.items
+                        );
+                    }
+                }
+            } catch (error) {
+                console.warn("GET DOCUMENT DETAIL ERROR", error);
+            }
+
+            if (!documentRecord) {
+                showToast("ไม่พบข้อมูลเอกสาร", "warning");
                 return;
             }
 
-            if (
-                window.jspdf &&
-                window.jspdf.jsPDF
-            ) {
-                generatePdfWithJsPdf(
-                    data
-                );
+            openDocumentModal(documentRecord);
+            return;
+        }
 
-                return;
-            }
-
-            printDocument(
-                data
+        if (action === "delete-document") {
+            await deleteRecord(
+                "Documents",
+                id,
+                function () {
+                    return renderDocumentsPage();
+                }
             );
-        } catch (error) {
+            return;
+        }
+
+        if (action === "cancel-document") {
+            await cancelDocument(id);
+            return;
+        }
+
+        if (action === "add-user") {
+            openUserModal(null);
+            return;
+        }
+
+        if (action === "edit-user") {
+            var userRecord = getRecordById(
+                state.currentData,
+                id
+            );
+
+            if (!userRecord) {
+                userRecord = await getEntity(
+                    "Users",
+                    id
+                );
+            }
+
+            openUserModal(userRecord);
+            return;
+        }
+
+        if (action === "delete-user") {
+            await deleteRecord(
+                "Users",
+                id,
+                function () {
+                    return renderUsersPage();
+                }
+            );
+            return;
+        }
+
+        if (action === "add-setting") {
+            openSettingModal(null);
+            return;
+        }
+
+        if (action === "edit-setting") {
+            var settingRecord = getRecordById(
+                state.currentData,
+                id
+            );
+
+            if (!settingRecord) {
+                settingRecord = await getEntity(
+                    "Settings",
+                    id
+                );
+            }
+
+            openSettingModal(settingRecord);
+            return;
+        }
+
+        if (action === "refresh-auditlogs") {
+            await renderAuditLogsPage();
+            return;
+        }
+
+        if (action === "run-report") {
+            try {
+                await runReport();
+                showToast("สร้างรายงานเรียบร้อยแล้ว", "success");
+            } catch (error) {
+                showToast(
+                    error.message || "สร้างรายงานไม่สำเร็จ",
+                    "error"
+                );
+            }
+
+            return;
+        }
+
+        if (action === "print-report") {
+            printReport();
+            return;
+        }
+
+        if (action === "export-report-xlsx") {
+            exportReport();
+            return;
+        }
+
+        if (action === "add-document-item") {
+            addDocumentItem();
+            return;
+        }
+
+        if (action === "close-modal") {
+            closeModal();
+            return;
+        }
+
+        if (action === "refresh-page") {
+            await refreshPage();
+            return;
+        }
+
+        if (action === "export-income-xlsx") {
+            exportPageData("income_" + toInputDate() + ".xlsx");
+            return;
+        }
+
+        if (action === "export-expense-xlsx") {
+            exportPageData("expense_" + toInputDate() + ".xlsx");
+            return;
+        }
+
+        if (action === "export-transfers-xlsx") {
+            exportPageData("transfers_" + toInputDate() + ".xlsx");
+            return;
+        }
+
+        if (action === "export-accounts-xlsx") {
+            exportPageData("accounts_" + toInputDate() + ".xlsx");
+            return;
+        }
+
+        if (action === "export-customers-xlsx") {
+            exportPageData("customers_" + toInputDate() + ".xlsx");
+            return;
+        }
+
+        if (action === "export-vendors-xlsx") {
+            exportPageData("vendors_" + toInputDate() + ".xlsx");
+            return;
+        }
+
+        if (action === "export-documents-xlsx") {
+            exportPageData("documents_" + toInputDate() + ".xlsx");
+            return;
+        }
+
+        if (action === "export-users-xlsx") {
+            exportPageData("users_" + toInputDate() + ".xlsx");
+            return;
+        }
+
+        if (action === "export-auditlogs-xlsx") {
+            exportPageData("auditlogs_" + toInputDate() + ".xlsx");
+            return;
+        }
+
+        if (action === "search-income") {
+            var incomeKeyword = getSearchKeyword(action);
+
+            await searchEntity(
+                "Income",
+                incomeKeyword,
+                function (rows) {
+                    renderTable(
+                        byId("incomeTableContainer"),
+                        [
+                            {
+                                label: "วันที่",
+                                key: "date",
+                                render: function (row) {
+                                    return formatDate(row.date);
+                                }
+                            },
+                            {
+                                label: "เลขที่เอกสาร",
+                                key: "docNo"
+                            },
+                            {
+                                label: "รายการ",
+                                key: "description"
+                            },
+                            {
+                                label: "ผู้ติดต่อ",
+                                key: "counterparty"
+                            },
+                            {
+                                label: "จำนวนเงิน",
+                                key: "amount",
+                                render: function (row) {
+                                    return formatMoney(row.amount);
+                                }
+                            }
+                        ],
+                        rows,
+                        {
+                            actions: {
+                                editAction: "edit-income",
+                                deleteAction: "delete-income"
+                            }
+                        }
+                    );
+                }
+            );
+
+            return;
+        }
+
+        if (action === "search-expense") {
+            var expenseKeyword = getSearchKeyword(action);
+
+            await searchEntity(
+                "Expenses",
+                expenseKeyword,
+                function (rows) {
+                    renderTable(
+                        byId("expenseTableContainer"),
+                        [
+                            {
+                                label: "วันที่",
+                                key: "date",
+                                render: function (row) {
+                                    return formatDate(row.date);
+                                }
+                            },
+                            {
+                                label: "เลขที่เอกสาร",
+                                key: "docNo"
+                            },
+                            {
+                                label: "รายการ",
+                                key: "description"
+                            },
+                            {
+                                label: "ผู้จำหน่าย",
+                                key: "counterparty"
+                            },
+                            {
+                                label: "จำนวนเงิน",
+                                key: "amount",
+                                render: function (row) {
+                                    return formatMoney(row.amount);
+                                }
+                            }
+                        ],
+                        rows,
+                        {
+                            actions: {
+                                editAction: "edit-expense",
+                                deleteAction: "delete-expense"
+                            }
+                        }
+                    );
+                }
+            );
+
+            return;
+        }
+
+        if (action === "search-transfers") {
+            var transferKeyword = getSearchKeyword(action);
+
+            await searchEntity(
+                "Transfers",
+                transferKeyword,
+                function (rows) {
+                    renderTable(
+                        byId("transfersTableContainer"),
+                        [
+                            {
+                                label: "วันที่",
+                                key: "date",
+                                render: function (row) {
+                                    return formatDate(row.date);
+                                }
+                            },
+                            {
+                                label: "เลขที่เอกสาร",
+                                key: "docNo"
+                            },
+                            {
+                                label: "จากบัญชี",
+                                key: "fromAccountId",
+                                render: function (row) {
+                                    return accountName(row.fromAccountId);
+                                }
+                            },
+                            {
+                                label: "ไปบัญชี",
+                                key: "toAccountId",
+                                render: function (row) {
+                                    return accountName(row.toAccountId);
+                                }
+                            },
+                            {
+                                label: "จำนวนเงิน",
+                                key: "amount",
+                                render: function (row) {
+                                    return formatMoney(row.amount);
+                                }
+                            }
+                        ],
+                        rows,
+                        {
+                            actions: {
+                                editAction: "edit-transfer",
+                                deleteAction: "delete-transfer"
+                            }
+                        }
+                    );
+                }
+            );
+
+            return;
+        }
+
+        if (action === "search-customers") {
+            var customerKeyword = getSearchKeyword(action);
+
+            await searchEntity(
+                "Customers",
+                customerKeyword,
+                function (rows) {
+                    renderTable(
+                        byId("customersTableContainer"),
+                        [
+                            {
+                                label: "รหัส",
+                                key: "code"
+                            },
+                            {
+                                label: "ชื่อ",
+                                key: "name"
+                            },
+                            {
+                                label: "เลขประจำตัวผู้เสียภาษี",
+                                key: "taxId"
+                            },
+                            {
+                                label: "โทรศัพท์",
+                                key: "phone"
+                            }
+                        ],
+                        rows,
+                        {
+                            actions: {
+                                editAction: "edit-customer",
+                                deleteAction: "delete-customer"
+                            }
+                        }
+                    );
+                }
+            );
+
+            return;
+        }
+
+        if (action === "search-vendors") {
+            var vendorKeyword = getSearchKeyword(action);
+
+            await searchEntity(
+                "Vendors",
+                vendorKeyword,
+                function (rows) {
+                    renderTable(
+                        byId("vendorsTableContainer"),
+                        [
+                            {
+                                label: "รหัส",
+                                key: "code"
+                            },
+                            {
+                                label: "ชื่อ",
+                                key: "name"
+                            },
+                            {
+                                label: "เลขประจำตัวผู้เสียภาษี",
+                                key: "taxId"
+                            },
+                            {
+                                label: "โทรศัพท์",
+                                key: "phone"
+                            }
+                        ],
+                        rows,
+                        {
+                            actions: {
+                                editAction: "edit-vendor",
+                                deleteAction: "delete-vendor"
+                            }
+                        }
+                    );
+                }
+            );
+
+            return;
+        }
+
+        if (action === "search-documents") {
+            var documentKeyword = getSearchKeyword(action);
+
+            await searchEntity(
+                "Documents",
+                documentKeyword,
+                function (rows) {
+                    renderTable(
+                        byId("documentsTableContainer"),
+                        [
+                            {
+                                label: "วันที่",
+                                key: "date",
+                                render: function (row) {
+                                    return formatDate(row.date);
+                                }
+                            },
+                            {
+                                label: "เลขที่",
+                                key: "docNo"
+                            },
+                            {
+                                label: "ประเภท",
+                                key: "docType",
+                                render: function (row) {
+                                    return documentTypeLabel(row.docType);
+                                }
+                            },
+                            {
+                                label: "คู่ค้า",
+                                key: "partyName"
+                            },
+                            {
+                                label: "ยอดรวม",
+                                key: "total",
+                                render: function (row) {
+                                    return formatMoney(row.total);
+                                }
+                            }
+                        ],
+                        rows,
+                        {
+                            actions: {
+                                editAction: "edit-document",
+                                deleteAction: "delete-document"
+                            }
+                        }
+                    );
+                }
+            );
+
+            return;
+        }
+    }
+
+    function bindGlobalEvents() {
+        document.addEventListener(
+            "click",
+            function (event) {
+                var closeElement = event.target.closest ?
+                    event.target.closest("[data-modal-close]") :
+                    null;
+
+                if (closeElement) {
+                    event.preventDefault();
+                    closeModal();
+                    return;
+                }
+
+                var removeItem = event.target.closest ?
+                    event.target.closest("[data-remove-document-item]") :
+                    null;
+
+                if (removeItem) {
+                    event.preventDefault();
+
+                    var index = parseInt(
+                        removeItem.getAttribute(
+                            "data-remove-document-item"
+                        ),
+                        10
+                    );
+
+                    if (!isNaN(index)) {
+                        removeDocumentItem(index);
+                    }
+
+                    return;
+                }
+
+                var actionElement = event.target.closest ?
+                    event.target.closest("[data-action]") :
+                    null;
+
+                if (!actionElement) {
+                    return;
+                }
+
+                if (
+                    actionElement.id === "loginButton" ||
+                    actionElement.id === "loginBtn"
+                ) {
+                    return;
+                }
+
+                var action = actionElement.getAttribute(
+                    "data-action"
+                );
+
+                if (!action) {
+                    return;
+                }
+
+                event.preventDefault();
+
+                handleAction(
+                    action,
+                    actionElement
+                ).catch(function (error) {
+                    console.error("ACTION ERROR", error);
+
+                    showToast(
+                        error.message || "เกิดข้อผิดพลาด",
+                        "error"
+                    );
+                });
+            },
+            false
+        );
+
+        document.addEventListener(
+            "input",
+            debounce(function (event) {
+                var target = event.target;
+
+                if (!target) {
+                    return;
+                }
+
+                if (
+                    target.matches &&
+                    target.matches(
+                        '#documentModalForm [data-item-field="quantity"], ' +
+                        '#documentModalForm [data-item-field="unitPrice"], ' +
+                        '#documentModalForm [name="discount"], ' +
+                        '#documentModalForm [name="taxRate"]'
+                    )
+                ) {
+                    updateDocumentTotals();
+                }
+            }, 150)
+        );
+
+        document.addEventListener(
+            "click",
+            function (event) {
+                var pageElement = event.target.closest ?
+                    event.target.closest("[data-page]") :
+                    null;
+
+                if (!pageElement) {
+                    return;
+                }
+
+                var page = pageElement.getAttribute("data-page");
+
+                if (!page) {
+                    return;
+                }
+
+                event.preventDefault();
+
+                navigate(page).catch(function (error) {
+                    console.error("PAGE NAVIGATION ERROR", error);
+                });
+            }
+        );
+    }
+
+    function bindLogoutButtons() {
+        var logoutSelectors = [
+            "#logoutBtn",
+            "#logoutButton",
+            "[data-logout]"
+        ];
+
+        logoutSelectors.forEach(function (selector) {
+            qsa(selector).forEach(function (element) {
+                element.addEventListener(
+                    "click",
+                    function (event) {
+                        event.preventDefault();
+
+                        logout().catch(function (error) {
+                            console.error("LOGOUT ERROR", error);
+                        });
+                    }
+                );
+            });
+        });
+    }
+
+    function bindSearchEnter() {
+        document.addEventListener(
+            "keydown",
+            function (event) {
+                if (event.key !== "Enter") {
+                    return;
+                }
+
+                var target = event.target;
+
+                if (!target || !target.matches) {
+                    return;
+                }
+
+                if (!target.matches("[data-search-input]")) {
+                    return;
+                }
+
+                event.preventDefault();
+
+                var action = target.getAttribute(
+                    "data-search-input"
+                );
+
+                if (!action) {
+                    return;
+                }
+
+                handleAction(
+                    action,
+                    target
+                ).catch(function (error) {
+                    showToast(
+                        error.message || "ค้นหาไม่สำเร็จ",
+                        "error"
+                    );
+                });
+            }
+        );
+    }
+
+    function ensureApiConfiguration() {
+        if (getApiUrl()) {
+            return true;
+        }
+
+        var warning =
+            "ยังไม่ได้กำหนด Google Apps Script Web App URL";
+
+        var apiWarning = byId("apiConfigurationWarning");
+
+        if (apiWarning) {
+            apiWarning.textContent = warning;
+            showElement(apiWarning);
+        }
+
+        console.warn(warning);
+
+        return false;
+    }
+
+    function exposeGlobalApi() {
+        window.App = {
+            config: CONFIG,
+            state: state,
+            login: login,
+            logout: logout,
+            navigate: navigate,
+            apiRequest: apiRequest,
+            refreshPage: refreshPage,
+            showToast: showToast,
+            openModal: openModal,
+            closeModal: closeModal,
+            renderDashboard: renderDashboard,
+            runReport: runReport,
+            printReport: printReport,
+            exportReport: exportReport
+        };
+
+        window.login = login;
+        window.logout = logout;
+        window.navigate = navigate;
+    }
+
+    async function initialize() {
+        if (state.initialized) {
+            return;
+        }
+
+        state.initialized = true;
+
+        exposeGlobalApi();
+
+        bindLoginEvents();
+        bindGlobalEvents();
+        bindLogoutButtons();
+        bindSearchEnter();
+
+        ensureApiConfiguration();
+
+        loadStoredSession();
+
+        if (state.token) {
+            var restored = await restoreSession();
+
+            if (!restored) {
+                showLoginScreen();
+            }
+        } else {
+            showLoginScreen();
+        }
+    }
+
+    if (document.readyState === "loading") {
+        document.addEventListener(
+            "DOMContentLoaded",
+            function () {
+                initialize().catch(function (error) {
+                    console.error(
+                        "APPLICATION INITIALIZATION ERROR",
+                        error
+                    );
+
+                    showToast(
+                        error.message ||
+                        "ไม่สามารถเริ่มต้นระบบได้",
+                        "error"
+                    );
+
+                    showLoginScreen();
+                });
+            }
+        );
+    } else {
+        initialize().catch(function (error) {
             console.error(
-                'PDF ERROR:',
+                "APPLICATION INITIALIZATION ERROR",
                 error
             );
 
             showToast(
                 error.message ||
-                'ไม่สามารถสร้าง PDF ได้',
-                'error'
+                "ไม่สามารถเริ่มต้นระบบได้",
+                "error"
             );
-        } finally {
-            setLoading(false);
-        }
+
+            showLoginScreen();
+        });
     }
 
-    async function generatePdfWithHtml2Pdf(
-        data
-    ) {
-        const element =
-            createPrintableDocumentElement(
-                data
-            );
-
-        document.body.appendChild(
-            element
-        );
-
-        const filename =
-            (
-                data.docNo ||
-                data.documentNo ||
-                'document'
-            ) +
-            '.pdf';
-
-        try {
-            await window.html2pdf()
-                .set(
-                    {
-                        margin: 10,
-                        filename:
-                            filename,
-                        image: {
-                            type:
-                                'jpeg',
-                            quality:
-                                0.95
-                        },
-                        html2canvas: {
-                            scale: 2,
-                            useCORS:
-                                true
-                        },
-                        jsPDF: {
-                            unit:
-                                'mm',
-                            format:
-                                'a4',
-                            orientation:
-                                'portrait'
-                        }
-                    }
-                )
-                .from(
-                    element
-                )
-                .save();
-        } finally {
-            if (
-                element.parentNode
-            ) {
-                element.parentNode.removeChild(
-                    element
-                );
-            }
-        }
-    }
-
-    function generatePdfWithJsPdf(data) {
-        const JsPDF =
-            window.jspdf.jsPDF;
-
-        const pdf =
-            new JsPDF({
-                orientation:
-                    'portrait',
-                unit:
-                    'mm',
-                format:
-                    'a4'
-            });
-
-        const hasThaiFont =
-            !!(
-                window.TH_SARABUN_FONT &&
-                typeof window.TH_SARABUN_FONT ===
-                'string'
-            );
-
-        if (
-            hasThaiFont &&
-            typeof pdf.addFileToVFS ===
-            'function' &&
-            typeof pdf.addFont ===
-            'function'
-        ) {
-            try {
-                pdf.addFileToVFS(
-                    'THSarabunNew.ttf',
-                    window.TH_SARABUN_FONT
-                );
-
-                pdf.addFont(
-                    'THSarabunNew.ttf',
-                    'THSarabunNew',
-                    'normal'
-                );
-
-                pdf.setFont(
-                    'THSarabunNew'
-                );
-            } catch (error) {
-                console.warn(
-                    'Thai font registration failed:',
-                    error
-                );
-            }
-        }
-
-        pdf.setFontSize(
-            16
-        );
-
-        pdf.text(
-            safePdfText(
-                getDocumentTypeName(
-                    data.docType ||
-                    data.documentType
-                )
-            ),
-            20,
-            20
-        );
-
-        pdf.setFontSize(
-            11
-        );
-
-        pdf.text(
-            safePdfText(
-                'เลขที่: ' +
-                (
-                    data.docNo ||
-                    data.documentNo ||
-                    '-'
-                )
-            ),
-            20,
-            30
-        );
-
-        pdf.text(
-            safePdfText(
-                'วันที่: ' +
-                formatDate(
-                    data.date
-                )
-            ),
-            20,
-            37
-        );
-
-        pdf.text(
-            safePdfText(
-                'คู่ค้า: ' +
-                (
-                    data.partyName ||
-                    data.customerName ||
-                    data.vendorName ||
-                    '-'
-                )
-            ),
-            20,
-            44
-        );
-
-        let y = 58;
-
-        const items =
-            normalizeArray(
-                data.items ||
-                data.documentItems
-            );
-
-        items.forEach(
-            function (item) {
-                const line =
-                    (
-                        item.description ||
-                        item.name ||
-                        ''
-                    ) +
-                    '  x' +
-                    (
-                        item.quantity ||
-                        1
-                    ) +
-                    '  ' +
-                    formatMoney(
-                        item.amount ||
-                        (
-                            parseNumber(
-                                item.quantity
-                            ) *
-                            parseNumber(
-                                item.unitPrice
-                            )
-                        )
-                    );
-
-                pdf.text(
-                    safePdfText(
-                        line
-                    ),
-                    20,
-                    y
-                );
-
-                y += 7;
-
-                if (
-                    y > 275
-                ) {
-                    pdf.addPage();
-                    y = 20;
-                }
-            }
-        );
-
-        y += 5;
-
-        pdf.text(
-            safePdfText(
-                'รวมก่อนส่วนลด: ' +
-                formatMoney(
-                    data.subtotal
-                )
-            ),
-            120,
-            y
-        );
-
-        y += 7;
-
-        pdf.text(
-            safePdfText(
-                'ส่วนลด: ' +
-                formatMoney(
-                    data.discount
-                )
-            ),
-            120,
-            y
-        );
-
-        y += 7;
-
-        pdf.text(
-            safePdfText(
-                'ภาษี: ' +
-                formatMoney(
-                    data.taxAmount
-                )
-            ),
-            120,
-            y
-        );
-
-        y += 8;
-
-        pdf.setFontSize(
-            14
-        );
-
-        pdf.text(
-            safePdfText(
-                'ยอดรวม: ' +
-                formatMoney(
-                    data.total ||
-                    data.grandTotal
-                ) +
-                ' บาท'
-            ),
-            120,
-            y
-        );
-
-        pdf.save(
-            (
-                data.docNo ||
-                data.documentNo ||
-                'document'
-            ) +
-            '.pdf'
-        );
-
-        showToast(
-            'สร้าง PDF สำเร็จ',
-            'success'
-        );
-    }
-
-    function safePdfText(text) {
-        return String(
-            text || ''
-        );
-    }
-
-    function createPrintableDocumentElement(
-        data
-    ) {
-        const element =
-            document.createElement(
-                'div'
-            );
-
-        element.className =
-            'print-document';
-
-        const items =
-            normalizeArray(
-                data.items ||
-                data.documentItems
-            );
-
-        let itemsHtml = '';
-
-        items.forEach(
-            function (item, index) {
-                const quantity =
-                    parseNumber(
-                        item.quantity
-                    ) || 1;
-
-                const unitPrice =
-                    parseNumber(
-                        item.unitPrice
-                    );
-
-                const amount =
-                    parseNumber(
-                        item.amount
-                    ) ||
-                    quantity *
-                    unitPrice;
-
-                itemsHtml +=
-                    '<tr>' +
-                    '<td>' +
-                    escapeHtml(
-                        index + 1
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        item.description ||
-                        item.name ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td class="right">' +
-                    escapeHtml(
-                        formatNumber(
-                            quantity
-                        )
-                    ) +
-                    '</td>' +
-                    '<td>' +
-                    escapeHtml(
-                        item.unit ||
-                        ''
-                    ) +
-                    '</td>' +
-                    '<td class="right">' +
-                    escapeHtml(
-                        formatMoney(
-                            unitPrice
-                        )
-                    ) +
-                    '</td>' +
-                    '<td class="right">' +
-                    escapeHtml(
-                        formatMoney(
-                            amount
-                        )
-                    ) +
-                    '</td>' +
-                    '</tr>';
-            }
-        );
-
-        element.innerHTML =
-            '<div class="print-document-inner">' +
-            '<div class="print-header">' +
-            '<h1>' +
-            escapeHtml(
-                getSetting(
-                    'businessName',
-                    'กิจการ'
-                )
-            ) +
-            '</h1>' +
-            '<h2>' +
-            escapeHtml(
-                getDocumentTypeName(
-                    data.docType ||
-                    data.documentType
-                )
-            ) +
-            '</h2>' +
-            '</div>' +
-            '<div class="print-meta">' +
-            '<div><strong>เลขที่:</strong> ' +
-            escapeHtml(
-                data.docNo ||
-                data.documentNo ||
-                '-'
-            ) +
-            '</div>' +
-            '<div><strong>วันที่:</strong> ' +
-            escapeHtml(
-                formatDate(
-                    data.date
-                )
-            ) +
-            '</div>' +
-            '<div><strong>ครบกำหนด:</strong> ' +
-            escapeHtml(
-                formatDate(
-                    data.dueDate
-                )
-            ) +
-            '</div>' +
-            '<div><strong>คู่ค้า:</strong> ' +
-            escapeHtml(
-                data.partyName ||
-                data.customerName ||
-                data.vendorName ||
-                '-'
-            ) +
-            '</div>' +
-            '<div><strong>เลขประจำตัวผู้เสียภาษี:</strong> ' +
-            escapeHtml(
-                data.taxId ||
-                '-'
-            ) +
-            '</div>' +
-            '<div><strong>โทรศัพท์:</strong> ' +
-            escapeHtml(
-                data.phone ||
-                '-'
-            ) +
-            '</div>' +
-            '</div>' +
-            '<table class="print-items">' +
-            '<thead>' +
-            '<tr>' +
-            '<th>ลำดับ</th>' +
-            '<th>รายการ</th>' +
-            '<th>จำนวน</th>' +
-            '<th>หน่วย</th>' +
-            '<th>ราคา/หน่วย</th>' +
-            '<th>จำนวนเงิน</th>' +
-            '</tr>' +
-            '</thead>' +
-            '<tbody>' +
-            itemsHtml +
-            '</tbody>' +
-            '</table>' +
-            '<div class="print-totals">' +
-            '<div><span>รวมก่อนส่วนลด</span><strong>' +
-            escapeHtml(
-                formatMoney(
-                    data.subtotal
-                )
-            ) +
-            ' บาท</strong></div>' +
-            '<div><span>ส่วนลด</span><strong>' +
-            escapeHtml(
-                formatMoney(
-                    data.discount
-                )
-            ) +
-            ' บาท</strong></div>' +
-            '<div><span>ภาษี</span><strong>' +
-            escapeHtml(
-                formatMoney(
-                    data.taxAmount
-                )
-            ) +
-            ' บาท</strong></div>' +
-            '<div class="grand-total"><span>ยอดรวมสุทธิ</span><strong>' +
-            escapeHtml(
-                formatMoney(
-                    data.total ||
-                    data.grandTotal
-                )
-            ) +
-            ' บาท</strong></div>' +
-            '</div>' +
-            '<div class="print-notes">' +
-            '<strong>หมายเหตุ:</strong> ' +
-            escapeHtml(
-                data.notes ||
-                ''
-            ) +
-            '</div>' +
-            '<div class="print-signatures">' +
-            '<div>ลงชื่อ ______________________________</div>' +
-            '<div>ผู้รับ / ผู้จ่าย / ผู้มีอำนาจ</div>' +
-            '<div>วันที่ ______________________________</div>' +
-            '</div>' +
-            '</div>';
-
-        return element;
-    }
-
-    function printDocument(data) {
-        const printable =
-            createPrintableDocumentElement(
-                data
-            );
-
-        const printWindow =
-            window.open(
-                '',
-                '_blank',
-                'width=900,height=1000'
-            );
-
-        if (!printWindow) {
-            showToast(
-                'เบราว์เซอร์บล็อกหน้าต่างพิมพ์ กรุณาอนุญาต Popup',
-                'warning'
-            );
-
-            return;
-        }
-
-        printWindow.document.open();
-
-        printWindow.document.write(
-            '<!DOCTYPE html>' +
-            '<html lang="th">' +
-            '<head>' +
-            '<meta charset="UTF-8">' +
-            '<title>' +
-            escapeHtml(
-                data.docNo ||
-                data.documentNo ||
-                'document'
-            ) +
-            '</title>' +
-            '<style>' +
-            'body{font-family:"TH Sarabun New","TH Sarabun",Arial,sans-serif;font-size:18px;margin:0;padding:20px;color:#111}' +
-            '.print-document-inner{max-width:190mm;margin:auto}' +
-            '.print-header{text-align:center;margin-bottom:20px}' +
-            '.print-header h1{font-size:28px;margin:0 0 5px}' +
-            '.print-header h2{font-size:24px;margin:0}' +
-            '.print-meta{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:20px}' +
-            '.print-items{width:100%;border-collapse:collapse}' +
-            '.print-items th,.print-items td{border:1px solid #222;padding:6px}' +
-            '.print-items th{text-align:center}' +
-            '.right{text-align:right}' +
-            '.print-totals{margin-top:15px;margin-left:auto;width:75%}' +
-            '.print-totals>div{display:flex;justify-content:space-between;padding:4px 0}' +
-            '.print-totals .grand-total{font-size:22px;border-top:2px solid #111;margin-top:5px;padding-top:8px}' +
-            '.print-notes{margin-top:30px;min-height:50px}' +
-            '.print-signatures{margin-top:70px;display:flex;justify-content:space-between;text-align:center}' +
-            '@media print{body{padding:0}.print-document-inner{max-width:none}}' +
-            '</style>' +
-            '</head>' +
-            '<body>' +
-            printable.innerHTML +
-            '</body>' +
-            '</html>'
-        );
-
-        printWindow.document.close();
-
-        printWindow.focus();
-
-        window.setTimeout(
-            function () {
-                printWindow.print();
-            },
-            500
-        );
-    }
-
-    function setupLoginForm() {
-        const loginForm =
-            byId('loginForm');
-
-        if (!loginForm) {
-            console.warn(
-                'ไม่พบ #loginForm'
-            );
-
-            return;
-        }
-
-        if (
-            loginForm.dataset.appBound ===
-            'true'
-        ) {
-            return;
-        }
-
-        loginForm.dataset.appBound =
-            'true';
-
-        loginForm.addEventListener(
-            'submit',
-            handleLoginSubmit
-        );
-
-        const loginButton =
-            byId('loginButton') ||
-            loginForm.querySelector(
-                'button[type="submit"]'
-            );
-
-        if (loginButton) {
-            loginButton.type =
-                'submit';
-        }
-    }
-
-    function setupNavigation() {
-        document.addEventListener(
-            'click',
-            async function (event) {
-                const navigation =
-                    event.target.closest(
-                        '[data-page]'
-                    );
-
-                if (
-                    navigation &&
-                    navigation.getAttribute(
-                        'data-page'
-                    )
-                ) {
-                    event.preventDefault();
-
-                    const page =
-                        navigation.getAttribute(
-                            'data-page'
-                        );
-
-                    await navigate(
-                        page
-                    );
-
-                    return;
-                }
-
-                const actionElement =
-                    event.target.closest(
-                        '[data-action]'
-                    );
-
-                if (
-                    !actionElement
-                ) {
-                    return;
-                }
-
-                const action =
-                    actionElement.getAttribute(
-                        'data-action'
-                    );
-
-                if (
-                    action ===
-                    'logout'
-                ) {
-                    event.preventDefault();
-                    await logout();
-                    return;
-                }
-
-                if (
-                    action ===
-                    'toggle-sidebar'
-                ) {
-                    event.preventDefault();
-                    toggleSidebar();
-                    return;
-                }
-
-                if (
-                    action ===
-                    'refresh-dashboard'
-                ) {
-                    event.preventDefault();
-                    await renderDashboard();
-                    return;
-                }
-
-                if (
-                    action ===
-                    'create'
-                ) {
-                    event.preventDefault();
-
-                    const entity =
-                        actionElement.getAttribute(
-                            'data-entity'
-                        );
-
-                    await openCreateModal(
-                        entity
-                    );
-
-                    return;
-                }
-
-                if (
-                    action ===
-                    'edit'
-                ) {
-                    event.preventDefault();
-
-                    const entity =
-                        actionElement.getAttribute(
-                            'data-entity'
-                        );
-
-                    const id =
-                        actionElement.getAttribute(
-                            'data-id'
-                        );
-
-                    await openEditModal(
-                        entity,
-                        id
-                    );
-
-                    return;
-                }
-
-                if (
-                    action ===
-                    'delete'
-                ) {
-                    event.preventDefault();
-
-                    const entity =
-                        actionElement.getAttribute(
-                            'data-entity'
-                        );
-
-                    const id =
-                        actionElement.getAttribute(
-                            'data-id'
-                        );
-
-                    await deleteEntity(
-                        entity,
-                        id
-                    );
-
-                    return;
-                }
-
-                if (
-                    action ===
-                    'apply-filter'
-                ) {
-                    event.preventDefault();
-
-                    const entity =
-                        actionElement.getAttribute(
-                            'data-entity'
-                        );
-
-                    await applyFilter(
-                        entity
-                    );
-
-                    return;
-                }
-
-                if (
-                    action ===
-                    'clear-filter'
-                ) {
-                    event.preventDefault();
-
-                    const entity =
-                        actionElement.getAttribute(
-                            'data-entity'
-                        );
-
-                    await clearFilter(
-                        entity
-                    );
-
-                    return;
-                }
-
-                if (
-                    action ===
-                    'page'
-                ) {
-                    event.preventDefault();
-
-                    const entity =
-                        actionElement.getAttribute(
-                            'data-entity'
-                        );
-
-                    const pageNumber =
-                        parseInt(
-                            actionElement.getAttribute(
-                                'data-page-number'
-                            ),
-                            10
-                        );
-
-                    await loadEntityRows(
-                        entity,
-                        pageNumber
-                    );
-
-                    return;
-                }
-
-                if (
-                    action ===
-                    'view-document'
-                ) {
-                    event.preventDefault();
-
-                    const id =
-                        actionElement.getAttribute(
-                            'data-id'
-                        );
-
-                    await viewDocument(
-                        id
-                    );
-
-                    return;
-                }
-
-                if (
-                    action ===
-                    'pdf-document'
-                ) {
-                    event.preventDefault();
-
-                    const id =
-                        actionElement.getAttribute(
-                            'data-id'
-                        );
-
-                    await downloadDocumentPdf(
-                        id
-                    );
-
-                    return;
-                }
-
-                if (
-                    action ===
-                    'cancel-document'
-                ) {
-                    event.preventDefault();
-
-                    const id =
-                        actionElement.getAttribute(
-                            'data-id'
-                        );
-
-                    await cancelDocument(
-                        id
-                    );
-
-                    return;
-                }
-
-                if (
-                    action ===
-                    'cancel-income'
-                ) {
-                    event.preventDefault();
-
-                    const id =
-                        actionElement.getAttribute(
-                            'data-id'
-                        );
-
-                    await cancelTransaction(
-                        'income',
-                        id
-                    );
-
-                    return;
-                }
-
-                if (
-                    action ===
-                    'cancel-expense'
-                ) {
-                    event.preventDefault();
-
-                    const id =
-                        actionElement.getAttribute(
-                            'data-id'
-                        );
-
-                    await cancelTransaction(
-                        'expense',
-                        id
-                    );
-
-                    return;
-                }
-
-                if (
-                    action ===
-                    'add-document-item'
-                ) {
-                    event.preventDefault();
-
-                    addDocumentItem();
-
-                    return;
-                }
-
-                if (
-                    action ===
-                    'remove-document-item'
-                ) {
-                    event.preventDefault();
-
-                    const index =
-                        actionElement.getAttribute(
-                            'data-index'
-                        );
-
-                    removeDocumentItem(
-                        index
-                    );
-
-                    return;
-                }
-
-                if (
-                    action ===
-                    'run-report'
-                ) {
-                    event.preventDefault();
-
-                    await runReport();
-
-                    return;
-                }
-
-                if (
-                    action ===
-                    'export-report'
-                ) {
-                    event.preventDefault();
-
-                    await exportReport();
-
-                    return;
-                }
-
-                if (
-                    action ===
-                    'export-entity'
-                ) {
-                    event.preventDefault();
-
-                    const entity =
-                        actionElement.getAttribute(
-                            'data-entity'
-                        );
-
-                    await exportCurrentEntity(
-                        entity
-                    );
-
-                    return;
-                }
-
-                if (
-                    action ===
-                    'refresh-auditlogs' ||
-                    action ===
-                    'load-auditlogs'
-                ) {
-                    event.preventDefault();
-
-                    await loadAuditLogs();
-
-                    return;
-                }
-
-                if (
-                    action ===
-                    'create-setting'
-                ) {
-                    event.preventDefault();
-
-                    openSettingModal(
-                        ''
-                    );
-
-                    return;
-                }
-
-                if (
-                    action ===
-                    'edit-setting'
-                ) {
-                    event.preventDefault();
-
-                    const key =
-                        actionElement.getAttribute(
-                            'data-key'
-                        );
-
-                    openSettingModal(
-                        key
-                    );
-
-                    return;
-                }
-            }
-        );
-    }
-
-    function setupGlobalEvents() {
-        document.addEventListener(
-            'input',
-            function (event) {
-                const element =
-                    event.target;
-
-                if (
-                    element &&
-                    element.matches(
-                        '[data-item-field]'
-                    )
-                ) {
-                    updateDocumentItemInput(
-                        element
-                    );
-                }
-
-                if (
-                    element &&
-                    (
-                        element.id ===
-                        'field-discount' ||
-                        element.id ===
-                        'field-taxRate'
-                    )
-                ) {
-                    updateDocumentTotalsFromEditor();
-                }
-            }
-        );
-
-        document.addEventListener(
-            'keydown',
-            function (event) {
-                if (
-                    event.key ===
-                    'Escape'
-                ) {
-                    const modal =
-                        byId(
-                            'modalContainer'
-                        );
-
-                    if (
-                        modal &&
-                        modal.classList.contains(
-                            'open'
-                        )
-                    ) {
-                        closeModal();
-                    }
-                }
-
-                if (
-                    event.ctrlKey &&
-                    event.key.toLowerCase() ===
-                    'k'
-                ) {
-                    const search =
-                        byId(
-                            'globalSearch'
-                        );
-
-                    if (search) {
-                        event.preventDefault();
-                        search.focus();
-                    }
-                }
-            }
-        );
-
-        window.addEventListener(
-            'resize',
-            debounce(
-                function () {
-                    if (
-                        window.innerWidth >
-                        900
-                    ) {
-                        closeSidebarMobile();
-                    }
-                },
-                150
-            )
-        );
-    }
-
-    function setupGlobalSearch() {
-        const search =
-            byId(
-                'globalSearch'
-            );
-
-        if (!search) {
-            return;
-        }
-
-        search.addEventListener(
-            'input',
-            debounce(
-                function () {
-                    const keyword =
-                        search.value.trim();
-
-                    if (
-                        keyword.length <
-                        2
-                    ) {
-                        return;
-                    }
-
-                    performGlobalSearch(
-                        keyword
-                    );
-                },
-                500
-            )
-        );
-    }
-
-    async function performGlobalSearch(
-        keyword
-    ) {
-        if (!state.token) {
-            return;
-        }
-
-        try {
-            const response =
-                await apiRequest(
-                    'list',
-                    {
-                        entity:
-                            'search',
-                        search:
-                            keyword,
-                        page:
-                            1,
-                        pageSize:
-                            10
-                    }
-                );
-
-            const data =
-                unwrapResponse(
-                    response
-                );
-
-            renderSearchResults(
-                normalizeArray(
-                    data
-                )
-            );
-        } catch (error) {
-            console.warn(
-                'Global search error:',
-                error
-            );
-        }
-    }
-
-    function renderSearchResults(rows) {
-        let container =
-            byId(
-                'globalSearchResults'
-            );
-
-        if (!container) {
-            container =
-                document.createElement(
-                    'div'
-                );
-
-            container.id =
-                'globalSearchResults';
-
-            container.className =
-                'global-search-results';
-
-            const search =
-                byId(
-                    'globalSearch'
-                );
-
-            if (
-                search &&
-                search.parentNode
-            ) {
-                search.parentNode.appendChild(
-                    container
-                );
-            }
-        }
-
-        if (!rows.length) {
-            container.innerHTML =
-                '<div class="search-empty">ไม่พบข้อมูล</div>';
-
-            return;
-        }
-
-        let html = '';
-
-        rows.forEach(
-            function (row) {
-                html +=
-                    '<button type="button" class="search-result-item" data-action="search-result" data-id="' +
-                    escapeHtml(
-                        row.id ||
-                        ''
-                    ) +
-                    '">' +
-                    '<strong>' +
-                    escapeHtml(
-                        row.name ||
-                        row.docNo ||
-                        row.description ||
-                        ''
-                    ) +
-                    '</strong>' +
-                    '<span>' +
-                    escapeHtml(
-                        row.type ||
-                        row.entity ||
-                        ''
-                    ) +
-                    '</span>' +
-                    '</button>';
-            }
-        );
-
-        container.innerHTML =
-            html;
-    }
-
-    function setupFormSubmitProtection() {
-        const forms =
-            $$('form');
-
-        forms.forEach(
-            function (form) {
-                if (
-                    form.id ===
-                    'loginForm'
-                ) {
-                    return;
-                }
-
-                form.addEventListener(
-                    'submit',
-                    function (event) {
-                        if (
-                            form.hasAttribute(
-                                'data-native-submit'
-                            )
-                        ) {
-                            return;
-                        }
-
-                        if (
-                            form.closest(
-                                '#modalContainer'
-                            )
-                        ) {
-                            return;
-                        }
-
-                        if (
-                            form.getAttribute(
-                                'action'
-                            ) ===
-                            ''
-                        ) {
-                            event.preventDefault();
-                        }
-                    }
-                );
-            }
-        );
-    }
-
-    function restoreCurrentPage() {
-        const stored =
-            getStorage(
-                'elaas_private_finance_current_page'
-            );
-
-        if (
-            stored &&
-            PAGE_CONFIG[stored]
-        ) {
-            state.currentPage =
-                stored;
-        } else {
-            state.currentPage =
-                'dashboard';
-        }
-    }
-
-    async function pingServer() {
-        try {
-            const response =
-                await apiRequest(
-                    'ping',
-                    {}
-                );
-
-            return !!response;
-        } catch (error) {
-            console.warn(
-                'Ping failed:',
-                error
-            );
-
-            return false;
-        }
-    }
-
-    function setupApiStatus() {
-        const status =
-            byId(
-                'apiStatus'
-            );
-
-        if (!status) {
-            return;
-        }
-
-        if (!isConfiguredApi()) {
-            status.textContent =
-                'ยังไม่ได้ตั้งค่า API';
-
-            status.classList.add(
-                'error'
-            );
-
-            return;
-        }
-
-        status.textContent =
-            'กำลังตรวจสอบระบบ...';
-
-        pingServer()
-            .then(
-                function (online) {
-                    if (online) {
-                        status.textContent =
-                            'เชื่อมต่อระบบแล้ว';
-
-                        status.classList.remove(
-                            'error'
-                        );
-
-                        status.classList.add(
-                            'online'
-                        );
-                    } else {
-                        status.textContent =
-                            'เชื่อมต่อไม่ได้';
-
-                        status.classList.add(
-                            'error'
-                        );
-                    }
-                }
-            );
-    }
-
-    async function init() {
-        if (
-            state.initialized
-        ) {
-            return;
-        }
-
-        state.initialized =
-            true;
-
-        restoreCurrentPage();
-
-        setupLoginForm();
-        setupNavigation();
-        setupGlobalEvents();
-        setupGlobalSearch();
-        setupFormSubmitProtection();
-
-        if (
-            !isConfiguredApi()
-        ) {
-            showLogin();
-            setupApiStatus();
-
-            console.warn(
-                'กรุณาตั้งค่า CONFIG.API_URL ใน app.js'
-            );
-
-            return;
-        }
-
-        setupApiStatus();
-
-        const restored =
-            await restoreSession();
-
-        if (!restored) {
-            showLogin();
-        }
-    }
-
-    window.App = {
-        config:
-            CONFIG,
-
-        state:
-            state,
-
-        login:
-            login,
-
-        logout:
-            logout,
-
-        navigate:
-            navigate,
-
-        apiRequest:
-            apiRequest,
-
-        loadBootstrap:
-            loadBootstrap,
-
-        openModal:
-            openModal,
-
-        closeModal:
-            closeModal,
-
-        showToast:
-            showToast,
-
-        exportXlsx:
-            exportXlsx,
-
-        downloadDocumentPdf:
-            downloadDocumentPdf,
-
-        renderDashboard:
-            renderDashboard,
-
-        runReport:
-            runReport,
-
-        clearSession:
-            clearSession
-    };
-
-    if (
-        document.readyState ===
-        'loading'
-    ) {
-        document.addEventListener(
-            'DOMContentLoaded',
-            init,
-            {
-                once: true
-            }
-        );
-    } else {
-        init();
-    }
 })();
