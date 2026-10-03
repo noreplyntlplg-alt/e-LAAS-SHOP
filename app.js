@@ -44,7 +44,7 @@ const SHOP_LAAS_CONFIG = {
      *
      * ห้ามใส่ URL ของหน้า GitHub
      */
-    API_URL: "https://script.google.com/macros/s/AKfycbw8gnDcBxWV8W-RFRvi1e-yZmpa03O3P8M2iX-QAAB93TLZDQHO_8qAPInSghM9mtZm/exec",
+    API_URL: "https://script.google.com/macros/s/AKfycbwAe57-8WoYewAb0UN1r5nY6pG59mEiKgAMUEWnHSprNkBxmEYHe0jTu1s-Zlmx-6w/exec",
 
     timezone: "Asia/Bangkok",
 
